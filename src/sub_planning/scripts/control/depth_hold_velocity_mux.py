@@ -46,6 +46,9 @@ class DepthHoldVelocityMux:
         self.depth_deadband = rospy.get_param('~depth_deadband', 0.03)
         self.vz_deadband = rospy.get_param('~vz_deadband', 0.02)
         self.reset_depth_on_rearm = rospy.get_param('~reset_depth_on_rearm', True)
+        # 禁用定深控制：强制垂向速度指令输出 0（仅转发平面 xy 指令）。
+        # 用于只做水平面目标跟踪、不允许 z 方向控制的实验（如 target_tracking_real）。
+        self.disable_depth_ctrl = bool(rospy.get_param('~disable_depth_ctrl', False))
 
         self.current_state = State()
         self.have_odom = False
@@ -165,7 +168,12 @@ class DepthHoldVelocityMux:
         else:
             rospy.logwarn_throttle(5.0, 'Planar velocity input timeout. Publishing zero vx, vy.')
 
-        vz_cmd, z_error_enu = self.compute_vz_cmd()
+        # 禁用定深控制时强制 z 指令为 0，仅转发平面 xy 速度
+        if self.disable_depth_ctrl:
+            vz_cmd = 0.0
+            z_error_enu = 0.0
+        else:
+            vz_cmd, z_error_enu = self.compute_vz_cmd()
         out.linear.z = vz_cmd
         self.output_pub.publish(out)
 

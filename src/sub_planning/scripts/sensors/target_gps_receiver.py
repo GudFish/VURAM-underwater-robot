@@ -31,6 +31,9 @@ UDP 报文格式（UTF-8 文本，两种均可）：
   ~fix_topic           – 原始目标 GPS 转发话题（默认 /target_gps/fix，NavSatFix）
   ~odom_topic          – 机器人 ENU 里程计话题（默认 /mavros/local_position/odom）
   ~home_topic          – 飞控 home 位置话题（默认 /mavros/home_position/home）
+  ~flatten_target_z    – 是否将目标 z 压平到机器人同一水平面（默认 False）。
+                         开启后方位解算与真值位姿均只考虑水平分量，目标 z
+                         取机器人当前 z，垂向不参与跟踪（z 控制由别处禁用）。
 """
 import json
 import math
@@ -73,6 +76,8 @@ class TargetGpsReceiver:
         self.odom_topic = rospy.get_param('~odom_topic', '/mavros/local_position/odom')
         self.home_topic = rospy.get_param('~home_topic', '/mavros/home_position/home')
         self.target_frame = rospy.get_param('~target_frame', 'map')
+        # 是否将目标压平到机器人同一水平面（忽略目标 z，仅水平方位）
+        self.flatten_target_z = bool(rospy.get_param('~flatten_target_z', False))
 
         # 3. 发布频率与数据新鲜度超时参数
         # GPS 位置短时间不变，真值位姿可以稍宽松；方位解算对新鲜度要求更高。
@@ -86,6 +91,7 @@ class TargetGpsReceiver:
         self.home = None            # (lat, lon, alt)，飞控 home 位置
         self.robot_x = 0.0          # 机器人 ENU 位置
         self.robot_y = 0.0
+        self.robot_z = 0.0          # 机器人 ENU 高度（压平目标 z 时使用）
         self.robot_yaw = 0.0        # 机器人 ENU 航向角
         self.have_odom = False
         self.target_enu = None      # 目标 ENU 位置 (x, y, z)
@@ -143,6 +149,7 @@ class TargetGpsReceiver:
         """功能：缓存机器人 ENU 位置与航向角。"""
         self.robot_x = msg.pose.pose.position.x
         self.robot_y = msg.pose.pose.position.y
+        self.robot_z = msg.pose.pose.position.z
         q = msg.pose.pose.orientation
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
@@ -259,7 +266,9 @@ class TargetGpsReceiver:
         msg.header.frame_id = self.target_frame
         msg.pose.position.x = self.target_enu[0]
         msg.pose.position.y = self.target_enu[1]
-        msg.pose.position.z = self.target_enu[2]
+        # 压平模式：目标 z 取机器人当前 z（同一水平面），忽略目标 GPS 高度
+        msg.pose.position.z = self.robot_z if (self.flatten_target_z and self.have_odom) \
+            else self.target_enu[2]
         msg.pose.orientation.w = 1.0
         self.pose_pub.publish(msg)
 
@@ -294,6 +303,8 @@ class TargetGpsReceiver:
         功能：计算目标相对机器人的距离与机体系方位角。
         输出：返回 (range_m, bearing_rad) 二元组，bearing 为机体系方位
               （机头为零、逆时针为正，与 tdoa_bearing_estimator 约定一致）。
+        说明：方位与距离均为水平分量，目标 z 不参与解算 —— 相当于目标被
+              置于与机器人同一水平面上（与 flatten_target_z 的语义一致）。
         """
         dx = self.target_enu[0] - self.robot_x
         dy = self.target_enu[1] - self.robot_y

@@ -44,7 +44,7 @@
 
   <!-- ==================== 声呐参数（按真实设备标定） ==================== -->
   <!-- sonar_range: 声呐量程 m（与 sonar_driver 的 range 参数一致） -->
-  <arg name="sonar_range" default="20.0"/>
+  <arg name="sonar_range" default="10.0"/>
   <!-- sonar_fov_deg: 声呐水平视场角 deg。须与真实设备一致（可由声呐驱动
        从波束表读取后标定），否则检测器/规划器的角度几何会失准。 -->
   <arg name="sonar_fov_deg" default="130.0"/>
@@ -52,7 +52,7 @@
   <arg name="sonar_gain" default="20"/>
   <arg name="sonar_mode" default="2"/>  <!-- 1=LF, 2=HF -->
   <arg name="sonar_publish_rate" default="10.0"/>
-  <arg name="sonar_flip_horizontal" default="false"/>
+  <arg name="sonar_flip_horizontal" default="true"/>  <!-- 沿中心竖线左右翻转 -->
   <arg name="sonar_flip_vertical" default="false"/>
 
   <!-- ==================== 传感器与显示开关 ==================== -->
@@ -78,10 +78,13 @@
   ==================================================================== -->
 
   <!-- ==================== 1. 基础控制链路（真实飞控） ==================== -->
+  <!-- 仅水平面跟踪：depth_ctrl_enable=False 使定深复用节点强制 z 方向速度
+       指令输出为 0（机器人 z 由飞控自身保持，规划器不进行 z 方向控制）。 -->
   <include file="$(find sub_planning)/launch/common_vehicle_control.launch">
     <arg name="pos_ctrl" value="False"/>
     <arg name="vel_ctrl_rate" value="20.0"/>
     <arg name="depth_mux" value="True"/>
+    <arg name="depth_ctrl_enable" value="False"/>
     <arg name="input_vel_topic" value="/target_velocity_xy"/>
     <arg name="output_vel_topic" value="/target_velocity"/>
     <arg name="show_rviz" value="$(arg show_rviz)"/>
@@ -92,12 +95,15 @@
   <!-- 发布 /dynamic_target/pose（ENU 真值）、/target_gps/fix（原始目标 GPS，
        按接收频率逐条转发，供 rosbag 离线分析）与 /target_acoustic_bearing
        （Float32 弧度，1 Hz，与仿真一致） -->
+  <!-- flatten_target_z=true：方位解算与目标真值位姿只考虑水平分量，
+       将目标 z 压平到与机器人同一水平面，垂向不参与目标跟踪。 -->
   <node name="target_gps_receiver" pkg="sub_planning" type="target_gps_receiver.py" output="screen">
     <param name="udp_port" value="$(arg udp_port)"/>
     <param name="bearing_publish_rate" value="$(arg bearing_rate)"/>
     <param name="target_pose_topic" value="/dynamic_target/pose"/>
     <param name="bearing_topic" value="/target_acoustic_bearing"/>
     <param name="fix_topic" value="/target_gps/fix"/>
+    <param name="flatten_target_z" value="true"/>
   </node>
 
   <!-- ==================== 1.6. 自动 ARM 节点（可选） ==================== -->
@@ -196,8 +202,8 @@
     <param name="control_rate" value="5.0"/>
     <param name="mpc_dt" value="0.2"/>
     <param name="horizon_steps" value="12"/>
-    <param name="desired_standoff" value="3.0"/>
-    <param name="exploration_standoff" value="4.5"/>
+    <param name="desired_standoff" value="1.0"/>
+    <param name="exploration_standoff" value="1.5"/>
     <param name="goal_tolerance" value="0.8"/>
     <param name="unc_low" value="1.0"/>
     <param name="unc_high" value="8.0"/>
@@ -211,9 +217,9 @@
     <param name="bearing_process_pos" value="0.05"/>
     <param name="bearing_process_vel" value="0.10"/>
     <param name="min_bearing_range" value="0.5"/>
-    <param name="u_max" value="0.8"/>
-    <param name="v_max" value="0.6"/>
-    <param name="r_max" value="0.6"/>
+    <param name="u_max" value="1.2"/>
+    <param name="v_max" value="0.8"/>
+    <param name="r_max" value="0.8"/>
     <param name="du_step_max" value="0.25"/>
     <param name="dv_step_max" value="0.20"/>
     <param name="dyaw_step_max" value="0.30"/>
@@ -280,8 +286,8 @@
     <param name="control_rate" value="5.0"/>
     <param name="mpc_dt" value="0.2"/>
     <param name="horizon_steps" value="12"/>
-    <param name="desired_standoff" value="3.0"/>
-    <param name="exploration_standoff" value="4.5"/>
+    <param name="desired_standoff" value="1.0"/>
+    <param name="exploration_standoff" value="1.5"/>
     <param name="goal_tolerance" value="0.8"/>
     <param name="unc_low" value="1.0"/>
     <param name="unc_high" value="8.0"/>
@@ -356,7 +362,7 @@
     <param name="avoidance_brake_distance" value="3.0"/>
     <param name="avoidance_blind_forward_scale" value="0.45"/>
     <param name="avoidance_min_confidence" value="0.2"/>
-    <param name="desired_standoff" value="3.0"/>
+    <param name="desired_standoff" value="1.0"/>
     <param name="goal_tolerance" value="0.8"/>
     <param name="use_goal_yaw" value="False"/>
     <param name="yaw_switch_dist" value="1.5"/>

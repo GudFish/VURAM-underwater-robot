@@ -5,6 +5,9 @@
   <arg name="pos_ctrl" default="False"/>
   <arg name="vel_ctrl_rate" default="20.0"/>
   <arg name="depth_mux" default="True"/>
+  <!-- depth_ctrl_enable: 是否启用定深控制。False 时定深复用节点仍运行并转发
+       平面 xy 速度，但强制 z 方向速度指令输出为 0（禁止 z 方向控制）。 -->
+  <arg name="depth_ctrl_enable" default="True"/>
   <!-- show_rviz: 是否启动 RViz（批量实验设为 false） -->
   <arg name="show_rviz" default="true"/>
   <!-- fcu_url: MAVROS 飞控连接地址（实物实验传串口等实际连接） -->
@@ -46,5 +49,8 @@
     <!-- 死区参数：抑制小范围深度和垂向速度抖动。 -->
     <param name="depth_deadband" value="0.03"/>
     <param name="vz_deadband" value="0.02"/>
+
+    <!-- 定深控制开关：False 时强制 z 方向速度指令输出为 0。 -->
+    <param name="disable_depth_ctrl" value="$(eval not arg('depth_ctrl_enable'))"/>
   </node>
 </launch>

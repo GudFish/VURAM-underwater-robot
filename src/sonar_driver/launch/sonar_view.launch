@@ -14,7 +14,7 @@
     <param name="mode"            value="2" />  <!-- 1=LF, 2=HF -->
 
     <param name="discovery_timeout" value="10" />
-    <param name="flip_horizontal"   value="false" />
+    <param name="flip_horizontal"   value="true" />  <!-- 沿中心竖线左右翻转 -->
     <param name="flip_vertical"     value="false" />
 
     <!-- 笛卡尔输出图像参数 (与仿真 forward_sonar_sim 对齐) -->
