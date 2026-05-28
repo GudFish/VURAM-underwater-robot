@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 使用布尔参数 -->
+  <arg name="pos_ctrl" default="True" doc="true for position control, false for velocity control"/>
+
+
+  <include file="$(find sub_planning)/launch/apm.launch"/>
+
+  <!-- 启动边界加载节点 -->
+  <node name="boundary_loader" pkg="sub_planning" type="boundary_loader.py" output="screen">
+        <!-- 从外部 YAML 文件加载参数到节点私有命名空间 -->
+        <rosparam command="load" file="$(find sub_planning)/config/boundary_points.yaml" />
+  </node>
+
+  <!-- 动态目标生成 -->
+  <!-- <node name="dynamic_target_generator" pkg="sub_planning" type="dynamic_target_generator.py" output="screen"/>
+
+  <node name="target_tracking_pos" pkg="sub_planning" type="target_tracking_pos.py" output="screen"/> -->
+
+  <!-- 速度控制节点 -->
+  <node name="set_body_vel_yaw_node" pkg="sub_planning" type="set_body_vel_yaw.py" output="screen"/>
+
+  <!-- 位置控制节点：仅当 pos_ctrl 为 true 时启动 -->
+  <node name="set_local_position_node" pkg="sub_planning" type="set_local_position.py" output="screen" if="$(arg pos_ctrl)">
+    <param name="kp_x" value="0.5"/>
+    <param name="ki_x" value="0.01"/>
+    <param name="kd_x" value="0.1"/>
+
+    <param name="kp_y" value="0.5"/>
+    <param name="ki_y" value="0.01"/>
+    <param name="kd_y" value="0.1"/>
+
+    <param name="kp_z" value="1"/>
+    <param name="ki_z" value="0.02"/>
+    <param name="kd_z" value="0.1"/>
+
+    <param name="kp_yaw" value="0.5"/>
+    <param name="ki_yaw" value="0.01"/>
+    <param name="kd_yaw" value="0.01"/>
+
+    <param name="max_vel_x" value="0.5"/>
+    <param name="max_vel_y" value="0.4"/>
+    <param name="max_vel_z" value="0.3"/>
+    <param name="max_yaw_rate" value="0.3"/>
+
+    <param name="pos_ctrl_dt" value="0.02"/>
+  </node>
+
+<include file="$(find sub_planning)/launch/rviz.launch"/>
+</launch>

@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 1. 将机器人模型加载到 ROS 参数服务器 -->
+    <param name="robot_description" textfile="$(find sub_planning)/urdf/AUV.urdf" />
+
+    <!-- 2. 启动 robot_state_publisher，它负责将 URDF 中的模型信息发布为 TF 变换 -->
+    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" />
+
+    <!-- 3. 发布urdf模型的base_link到map坐标的变换，因为/mavros/local_position/pose在map坐标下 -->
+    <node name="tf_baselink_map_node" pkg="sub_planning" type="tf_baselink_map_node.py" />
+
+    <!-- 启动rviz -->
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find sub_planning)/config/ardusub_display.rviz" output="screen" />
+</launch>

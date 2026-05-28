@@ -1,0 +1,26 @@
+# 直接将边界坐标定义为该节点的参数[latitude, longitude, altitude], 二维可忽略alt
+
+# for SITL boundary
+# sim_vehicle.py -v ArduSub --console
+# gps_points:
+  # - [-35.3633621, 149.1651374]
+  # - [-35.3633621, 149.1653374]
+  # - [-35.3631621, 149.1653374]
+  # - [-35.3631621, 149.1651374]
+
+
+# for SITL boundary with user define location
+# sim_vehicle.py -v ArduSub -l 31.284655,121.211000,0,0 --console
+gps_points:
+  - [31.284650, 121.210950]
+  - [31.284650, 121.211600]
+  - [31.284840, 121.211600]
+  - [31.284840, 121.210950]
+
+
+# for real-world lake boundary
+# gps_points:
+#   - [31.288777, 121.221640]
+#   - [31.288771, 121.222558]
+#   - [31.289029, 121.222384]
+#   - [31.289074, 121.221697]

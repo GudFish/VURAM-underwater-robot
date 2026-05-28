@@ -1,0 +1,2 @@
+sub_planning
+-DCATKIN_DEVEL_PREFIX=/home/lhy/ardupilot_ws/devel -DCMAKE_INSTALL_PREFIX=/home/lhy/ardupilot_ws/install -G Unix Makefiles

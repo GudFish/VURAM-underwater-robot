@@ -1,0 +1,8 @@
+prefix=/home/lhy/ardupilot_ws/install
+
+Name: sub_planning
+Description: Description of sub_planning
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 
