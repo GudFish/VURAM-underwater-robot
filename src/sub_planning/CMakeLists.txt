@@ -9,7 +9,9 @@ project(sub_planning)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
+  nav_msgs
   mavros_msgs
+  std_msgs
   visualization_msgs
   rospy
 )
@@ -162,6 +164,8 @@ include_directories(
 ## in contrast to setup.py, you can choose the destination
 catkin_install_python(PROGRAMS
   scripts/set_body_vel_yaw.py
+  scripts/mpc_2d_planner.py
+  scripts/fossen_model_demo.py
   scripts/set_local_position.py
   scripts/tf_baselink_map_node.py
   scripts/boundary_loader.py

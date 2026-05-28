@@ -8,11 +8,25 @@ class DynamicTargetGenerator:
     def __init__(self):
         rospy.init_node('dynamic_target_generator')
         
-        # 读取边界参数
-        boundary_points = rospy.get_param('/boundary_loader/enu_points', [])
-        if len(boundary_points) < 3:
-            rospy.logerr("边界点不足，至少需要3个点构成多边形")
-            rospy.signal_shutdown("边界参数错误")
+        # --- 等待边界参数加载完成 ---
+        timeout = rospy.Duration(60.0)  # 最长等待30秒
+        start_time = rospy.Time.now()
+        boundary_points = []
+        
+        while not rospy.is_shutdown():
+            if rospy.has_param('/boundary_loader/enu_points'):
+                boundary_points = rospy.get_param('/boundary_loader/enu_points')
+                if len(boundary_points) >= 3:
+                    rospy.loginfo("成功加载边界参数，共 %d 个顶点", len(boundary_points))
+                    break
+            if rospy.Time.now() - start_time > timeout:
+                rospy.logerr("等待边界参数超时（60秒），节点退出")
+                rospy.signal_shutdown("边界参数未加载")
+                return
+            rospy.loginfo_throttle(5, "等待边界参数 /boundary_loader/enu_points 加载...")
+            rospy.sleep(2)
+        
+        if rospy.is_shutdown():
             return
         
         # 构建shapely多边形
@@ -30,8 +44,8 @@ class DynamicTargetGenerator:
             ])
         
         # 运动参数
-        self.velocity = np.random.uniform(-1.0, 1.0, 2)  # 初始随机速度 (m/s)
-        self.speed_limit = 2.0                           # 最大速率 (m/s)
+        self.velocity = np.random.uniform(-0.3, 0.3, 2)  # 初始随机速度 (m/s)
+        self.speed_limit = 0.5                           # 最大速率 (m/s)
         self.accel_std = 0.5                             # 加速度噪声标准差
         
         # ROS发布者

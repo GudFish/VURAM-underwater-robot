@@ -97,7 +97,7 @@ class PositionController:
         else:
             self.current_target_yaw = self.target_yaw   # 后备
         self.target_received = True
-        rospy.loginfo(f"Target received: ({self.target_x:.2f}, {self.target_y:.2f}, {self.target_z:.2f}), final yaw={self.target_yaw:.2f}")
+        # rospy.loginfo(f"Target received: ({self.target_x:.2f}, {self.target_y:.2f}, {self.target_z:.2f}), final yaw={self.target_yaw:.2f}")
 
     def control_loop(self, event):
         if self.current_pose is None:

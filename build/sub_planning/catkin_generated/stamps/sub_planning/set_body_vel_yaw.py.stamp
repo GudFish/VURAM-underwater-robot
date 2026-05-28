@@ -69,10 +69,16 @@ class CombinedPlanner:
 
     def control_loop(self, event):
         # 1. 安全检查
-        if not self.current_state.connected or self.current_state.mode != "GUIDED" or not self.current_state.armed:
-            rospy.logwarn_throttle(5, "Waiting for connection, GUIDED mode, or arming...")
+        if not self.current_state.connected:
+            rospy.logwarn_throttle(5, "Waiting for connection...")
             return
-
+        if self.current_state.mode != "GUIDED" and self.current_state.mode != "ALT_HOLD":
+            rospy.logwarn_throttle(5, "Waiting for GUIDED mode, or Depth Hold mode...")
+            return
+        if not self.current_state.armed:
+            rospy.logwarn_throttle(5, "Waiting for arming...")
+            return
+        
         # 2. 超时检查
         now = rospy.Time.now()
         

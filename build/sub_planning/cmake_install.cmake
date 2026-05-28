@@ -57,6 +57,14 @@ if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/mpc_2d_planner.py")
+endif()
+
+if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/fossen_model_demo.py")
+endif()
+
+if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
   file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/set_local_position.py")
 endif()
 

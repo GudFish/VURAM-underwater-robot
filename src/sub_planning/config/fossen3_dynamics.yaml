@@ -1,0 +1,23 @@
+# Fossen 3-DOF horizontal plane model parameters
+# State: eta=[x,y,psi], nu=[u,v,r]
+# Dynamics: M*nu_dot + C(nu)*nu + D(nu)*nu = tau
+
+# Mass / inertia (including added-mass equivalent)
+m11: 40.0
+m22: 55.0
+m23: 0.0
+m33: 12.0
+
+# Linear damping
+d11: 20.0
+d22: 28.0
+d23: 0.0
+d32: 0.0
+d33: 8.0
+
+# Quadratic damping
+n11: 18.0
+n22: 24.0
+n23: 0.0
+n32: 0.0
+n33: 6.0

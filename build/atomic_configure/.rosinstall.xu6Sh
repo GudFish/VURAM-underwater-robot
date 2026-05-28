@@ -1,0 +1,2 @@
+- setup-file:
+    local-name: /home/lhy/ardupilot_ws/devel/setup.sh

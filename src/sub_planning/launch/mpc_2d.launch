@@ -1,0 +1,57 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 启动飞控桥接与控制发送节点 -->
+  <include file="$(find sub_planning)/launch/AUV_ctrl.launch">
+    <arg name="pos_ctrl" value="False"/>
+  </include>
+
+  <!-- 二维MPC轨迹规划节点 -->
+  <node name="mpc_2d_planner" pkg="sub_planning" type="mpc_2d_planner.py" output="screen">
+    <!-- 通用动力学参数：可被其他规划算法复用 -->
+    <rosparam command="load" file="$(find sub_planning)/config/fossen3_dynamics.yaml" ns="dynamics"/>
+
+    <!-- 目标输入话题：外部目标和RViz 2D Nav Goal -->
+    <param name="goal_topic" value="/target_pose"/>
+    <param name="rviz_goal_topic" value="/move_base_simple/goal"/>
+
+    <param name="goal_tolerance" value="0.1"/>
+
+    <!-- 终点yaw控制 -->
+    <param name="use_goal_yaw" value="True"/>
+    <param name="yaw_switch_dist" value="1.5"/>
+
+    <!-- MPC核心参数 -->
+    <param name="control_rate" value="5.0"/>
+    <param name="mpc_dt" value="0.2"/>
+    <param name="horizon_steps" value="15"/>
+
+    <!-- 序列采样扰动（标准MPC序列优化） -->
+    <param name="sigma_u" value="0.10"/>
+    <param name="sigma_v" value="0.08"/>
+    <param name="sigma_yaw" value="0.12"/>
+    <param name="du_step_max" value="0.25"/>
+    <param name="dv_step_max" value="0.20"/>
+    <param name="dyaw_step_max" value="0.30"/>
+
+    <!-- 指令约束与虚拟力矩映射参数 -->
+    <param name="u_max" value="0.8"/>
+    <param name="v_max" value="0.6"/>
+    <param name="r_max" value="0.6"/>
+    <param name="k_tau_u" value="120.0"/>
+    <param name="k_tau_v" value="120.0"/>
+    <param name="k_tau_r" value="80.0"/>
+    <param name="tau_u_max" value="200.0"/>
+    <param name="tau_v_max" value="200.0"/>
+    <param name="tau_r_max" value="120.0"/>
+
+    <!-- 代价函数权重 -->
+    <param name="w_pos" value="4.0"/>
+    <param name="w_terminal" value="30.0"/>
+    <param name="w_yaw" value="1.0"/>
+    <param name="w_terminal_yaw" value="12.0"/>
+    <param name="w_ctrl" value="0.2"/>
+    <param name="w_sway" value="0.3"/>
+    <param name="w_du" value="0.6"/>
+    <param name="w_dyaw" value="0.4"/>
+  </node>
+</launch>
