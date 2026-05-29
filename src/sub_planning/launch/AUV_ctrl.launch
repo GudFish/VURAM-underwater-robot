@@ -1,7 +1,8 @@
 <?xml version="1.0"?>
 <launch>
   <!-- 使用布尔参数 -->
-  <arg name="pos_ctrl" default="True" doc="true for position control, false for velocity control"/>
+  <arg name="pos_ctrl" default="False" doc="true for position control, false for velocity control"/>
+  <arg name="vel_ctrl_rate" default="20.0" doc="publish rate of body velocity and yaw setpoints"/>
 
 
   <include file="$(find sub_planning)/launch/apm.launch"/>
@@ -18,7 +19,9 @@
   <node name="target_tracking_pos" pkg="sub_planning" type="target_tracking_pos.py" output="screen"/> -->
 
   <!-- 速度控制节点 -->
-  <node name="set_body_vel_yaw_node" pkg="sub_planning" type="set_body_vel_yaw.py" output="screen"/>
+  <node name="set_body_vel_yaw_node" pkg="sub_planning" type="set_body_vel_yaw.py" output="screen">
+    <param name="control_rate" value="$(arg vel_ctrl_rate)"/>
+  </node>
 
   <!-- 位置控制节点：仅当 pos_ctrl 为 true 时启动 -->
   <node name="set_local_position_node" pkg="sub_planning" type="set_local_position.py" output="screen" if="$(arg pos_ctrl)">

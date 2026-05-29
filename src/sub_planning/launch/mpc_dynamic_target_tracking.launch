@@ -1,0 +1,63 @@
+<?xml version="1.0"?>
+<launch>
+  <include file="$(find sub_planning)/launch/AUV_ctrl.launch">
+    <arg name="pos_ctrl" value="False"/>
+    <arg name="vel_ctrl_rate" value="20.0"/>
+  </include>
+
+  <node name="depth_hold_velocity_mux" pkg="sub_planning" type="depth_hold_velocity_mux.py" output="screen">
+    <param name="input_vel_topic" value="/target_velocity_xy"/>
+    <param name="output_vel_topic" value="/target_velocity"/>
+    <param name="odom_topic" value="/mavros/local_position/odom"/>
+    <param name="state_topic" value="/mavros/state"/>
+    <param name="control_rate" value="20.0"/>
+    <param name="depth_kp" value="0.9"/>
+    <param name="depth_kd" value="0.6"/>
+    <param name="max_abs_vz" value="0.25"/>
+    <param name="depth_deadband" value="0.03"/>
+    <param name="vz_deadband" value="0.02"/>
+  </node>
+
+  <node name="dynamic_target_generator" pkg="sub_planning" type="dynamic_target_generator.py" output="screen"/>
+
+  <node name="mpc_dynamic_target_tracker" pkg="sub_planning" type="mpc_dynamic_target_tracker.py" output="screen">
+    <rosparam command="load" file="$(find sub_planning)/config/fossen3_dynamics.yaml" ns="dynamics"/>
+
+    <param name="target_topic" value="/dynamic_target/pose"/>
+    <param name="odom_topic" value="/mavros/local_position/odom"/>
+    <param name="vel_topic" value="/target_velocity_xy"/>
+    <param name="yaw_topic" value="/target_yaw"/>
+
+    <param name="desired_standoff" value="3.0"/>
+    <param name="goal_tolerance" value="0.8"/>
+    <param name="use_goal_yaw" value="False"/>
+    <param name="yaw_switch_dist" value="1.5"/>
+
+    <param name="control_rate" value="5.0"/>
+    <param name="mpc_dt" value="0.2"/>
+    <param name="horizon_steps" value="12"/>
+    <param name="du_step_max" value="0.25"/>
+    <param name="dv_step_max" value="0.20"/>
+    <param name="dyaw_step_max" value="0.30"/>
+
+    <param name="u_max" value="0.8"/>
+    <param name="v_max" value="0.6"/>
+    <param name="r_max" value="0.6"/>
+    <param name="psi_kp" value="1.6"/>
+    <param name="k_tau_u" value="120.0"/>
+    <param name="k_tau_v" value="120.0"/>
+    <param name="k_tau_r" value="80.0"/>
+    <param name="tau_u_max" value="200.0"/>
+    <param name="tau_v_max" value="200.0"/>
+    <param name="tau_r_max" value="120.0"/>
+
+    <param name="w_track" value="2.0"/>
+    <param name="w_terminal_track" value="10.0"/>
+    <param name="w_yaw" value="0.8"/>
+    <param name="w_ctrl" value="0.2"/>
+    <param name="w_sway" value="0.3"/>
+    <param name="w_du" value="0.6"/>
+    <param name="w_dyaw" value="0.4"/>
+    <param name="w_cte" value="2.5"/>
+  </node>
+</launch>

@@ -164,13 +164,14 @@ include_directories(
 ## in contrast to setup.py, you can choose the destination
 catkin_install_python(PROGRAMS
   scripts/set_body_vel_yaw.py
+  scripts/depth_hold_velocity_mux.py
   scripts/mpc_2d_planner.py
+  scripts/mpc_dynamic_target_tracker.py
   scripts/fossen_model_demo.py
   scripts/set_local_position.py
   scripts/tf_baselink_map_node.py
   scripts/boundary_loader.py
   scripts/dynamic_target_generator.py
-  scripts/target_tracking_pos.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

@@ -10,12 +10,12 @@
 
 
 # for SITL boundary with user define location
-# sim_vehicle.py -v ArduSub -l 31.284655,121.211000,0,0 --console
+# sim_vehicle.py -v ArduSub -l 31.284655,121.211750,0,0 --console
 gps_points:
-  - [31.284650, 121.210950]
-  - [31.284650, 121.211600]
-  - [31.284840, 121.211600]
-  - [31.284840, 121.210950]
+  - [31.284650, 121.211000]
+  - [31.284650, 121.211800]
+  - [31.284840, 121.211800]
+  - [31.284840, 121.211000]
 
 
 # for real-world lake boundary

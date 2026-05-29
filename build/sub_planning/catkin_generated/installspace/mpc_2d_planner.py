@@ -71,8 +71,6 @@ class IPOPTMPC2DPlanner:
         self.w_sway = rospy.get_param('~w_sway', 0.3)
         self.w_du = rospy.get_param('~w_du', 0.6)
         self.w_dyaw = rospy.get_param('~w_dyaw', 0.3)
-        self.w_cte = rospy.get_param('~w_cte', 3.5)
-        self.w_v_along = rospy.get_param('~w_v_along', 1.5)
 
         # Fossen params (shared yaml)
         dyn = rospy.get_param('~dynamics', {})
@@ -235,19 +233,12 @@ class IPOPTMPC2DPlanner:
             dv_cmd = v_cmd - prev_v_cmd
             dyaw_cmd = ca.atan2(ca.sin(yaw_cmd - prev_yaw_cmd), ca.cos(yaw_cmd - prev_yaw_cmd))
 
-            # cross-track term and along-track speed preference (reduce sideslip motion)
-            ex_b = ca.cos(psi) * dx + ca.sin(psi) * dy
-            ey_b = -ca.sin(psi) * dx + ca.cos(psi) * dy
-            v_along_ref = ca.fmin(self.u_max, 0.6 * ca.sqrt(dist2 + 1e-9))
-
             J = J + self.w_pos * dist2
             J = J + self.w_yaw * yaw_err * yaw_err
             J = J + self.w_ctrl * (u_cmd * u_cmd + v_cmd * v_cmd)
             J = J + self.w_sway * (v * v)
             J = J + self.w_du * (du_cmd * du_cmd + dv_cmd * dv_cmd)
             J = J + self.w_dyaw * (dyaw_cmd * dyaw_cmd)
-            J = J + self.w_cte * (ey_b * ey_b)
-            J = J + self.w_v_along * ((u - v_along_ref) * (u - v_along_ref))
 
             prev_u_cmd = u_cmd
             prev_v_cmd = v_cmd
@@ -362,10 +353,8 @@ class IPOPTMPC2DPlanner:
             yaw_ref = math.atan2(dy, dx)
 
         # gentle attraction in warm start
-        ex_b = math.cos(self.psi) * dx + math.sin(self.psi) * dy
-        ey_b = -math.sin(self.psi) * dx + math.cos(self.psi) * dy
-        u_ref = self._clip(0.6 * ex_b, -self.u_max, self.u_max)
-        v_ref = self._clip(0.3 * ey_b, -self.v_max, self.v_max)
+        u_ref = self._clip(0.6 * dx, -self.u_max, self.u_max)
+        v_ref = self._clip(0.6 * dy, -self.v_max, self.v_max)
         for k in range(self.N):
             self.U_init[k] = self._clip(0.7 * self.U_init[k] + 0.3 * u_ref, -self.u_max, self.u_max)
             self.V_init[k] = self._clip(0.7 * self.V_init[k] + 0.3 * v_ref, -self.v_max, self.v_max)
