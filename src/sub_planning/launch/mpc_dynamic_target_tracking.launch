@@ -28,7 +28,7 @@
     <param name="vel_topic" value="/target_velocity_xy"/>
     <param name="yaw_topic" value="/target_yaw"/>
 
-    <param name="desired_standoff" value="3.0"/>
+    <param name="desired_standoff" value="2.0"/>
     <param name="goal_tolerance" value="0.8"/>
     <param name="use_goal_yaw" value="False"/>
     <param name="yaw_switch_dist" value="1.5"/>
