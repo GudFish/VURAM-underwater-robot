@@ -1,0 +1,103 @@
+<?xml version="1.0"?>
+<launch>
+  <include file="$(find sub_planning)/launch/AUV_ctrl.launch">
+    <arg name="pos_ctrl" value="False"/>
+    <arg name="vel_ctrl_rate" value="20.0"/>
+  </include>
+
+  <node name="depth_hold_velocity_mux" pkg="sub_planning" type="depth_hold_velocity_mux.py" output="screen">
+    <param name="input_vel_topic" value="/target_velocity_xy"/>
+    <param name="output_vel_topic" value="/target_velocity"/>
+    <param name="odom_topic" value="/mavros/local_position/odom"/>
+    <param name="state_topic" value="/mavros/state"/>
+    <param name="control_rate" value="20.0"/>
+    <param name="depth_kp" value="0.9"/>
+    <param name="depth_kd" value="0.6"/>
+    <param name="max_abs_vz" value="0.25"/>
+    <param name="depth_deadband" value="0.03"/>
+    <param name="vz_deadband" value="0.02"/>
+  </node>
+
+  <node name="dynamic_target_generator" pkg="sub_planning" type="dynamic_target_generator.py" output="screen"/>
+
+  <node name="acoustic_range_sensor_sim" pkg="sub_planning" type="acoustic_range_sensor_sim.py" output="screen">
+    <param name="state_topic" value="/mavros/state"/>
+    <param name="robot_odom_topic" value="/mavros/local_position/odom"/>
+    <param name="target_pose_topic" value="/dynamic_target/pose"/>
+    <param name="range_topic" value="/target_acoustic_range"/>
+    <param name="measurement_rate" value="0.5"/>
+    <param name="range_noise_std" value="0.4"/>
+    <param name="max_range" value="80.0"/>
+    <param name="drop_prob" value="0.15"/>
+    <param name="reset_on_disarm" value="True"/>
+  </node>
+
+  <node name="target_state_estimator_ekf" pkg="sub_planning" type="target_state_estimator_ekf.py" output="screen">
+    <param name="robot_odom_topic" value="/mavros/local_position/odom"/>
+    <param name="state_topic" value="/mavros/state"/>
+    <param name="range_topic" value="/target_acoustic_range"/>
+    <param name="target_pose_topic" value="/target_estimate/pose"/>
+    <param name="target_twist_topic" value="/target_estimate/twist"/>
+    <param name="belief_topic" value="/target_estimate/belief"/>
+    <param name="filter_rate" value="10.0"/>
+    <param name="range_noise_std" value="0.4"/>
+    <param name="use_prior_init" value="False"/>
+    <param name="reset_on_disarm" value="True"/>
+    <rosparam param="process_noise_diag">[0.5, 0.5, 0.8, 0.8]</rosparam>
+    <rosparam param="init_mean">[8.0, 0.0, 0.4, 0.0]</rosparam>
+    <rosparam param="init_cov_diag">[9.0, 9.0, 1.0, 1.0]</rosparam>
+    <param name="auto_init_range_angle" value="0.35"/>
+  </node>
+
+  <node name="target_belief_viz" pkg="sub_planning" type="target_belief_viz.py" output="screen">
+    <param name="belief_topic" value="/target_estimate/belief"/>
+    <param name="marker_topic" value="/target_estimate/belief_marker"/>
+    <param name="ellipse_sigma" value="2.0"/>
+    <param name="show_trace" value="True"/>
+    <param name="show_pos_std" value="True"/>
+  </node>
+
+  <node name="mpc_belief_target_tracker" pkg="sub_planning" type="mpc_belief_target_tracker.py" output="screen">
+    <rosparam command="load" file="$(find sub_planning)/config/fossen3_dynamics.yaml" ns="dynamics"/>
+    <param name="odom_topic" value="/mavros/local_position/odom"/>
+    <param name="belief_topic" value="/target_estimate/belief"/>
+    <param name="vel_topic" value="/target_velocity_xy"/>
+    <param name="yaw_topic" value="/target_yaw"/>
+    <param name="control_rate" value="5.0"/>
+    <param name="mpc_dt" value="0.2"/>
+    <param name="horizon_steps" value="12"/>
+    <param name="desired_standoff" value="3.0"/>
+    <param name="exploration_standoff" value="4.5"/>
+    <param name="goal_tolerance" value="0.8"/>
+    <param name="unc_low" value="1.0"/>
+    <param name="unc_high" value="8.0"/>
+    <param name="unc_pos_gain" value="1.0"/>
+    <param name="unc_vel_gain" value="0.4"/>
+    <param name="sigma_process" value="0.05"/>
+    <param name="sigma_info_gain" value="6.0"/>
+    <param name="sigma_min" value="0.1"/>
+    <param name="w_sigma" value="1.2"/>
+    <param name="w_los_rate" value="3.0"/>
+    <param name="u_max" value="0.8"/>
+    <param name="v_max" value="0.6"/>
+    <param name="r_max" value="0.6"/>
+    <param name="du_step_max" value="0.25"/>
+    <param name="dv_step_max" value="0.20"/>
+    <param name="dyaw_step_max" value="0.30"/>
+    <param name="psi_kp" value="1.6"/>
+    <param name="k_tau_u" value="120.0"/>
+    <param name="k_tau_v" value="120.0"/>
+    <param name="k_tau_r" value="80.0"/>
+    <param name="tau_u_max" value="200.0"/>
+    <param name="tau_v_max" value="200.0"/>
+    <param name="tau_r_max" value="120.0"/>
+    <param name="w_track" value="2.0"/>
+    <param name="w_terminal_track" value="10.0"/>
+    <param name="w_yaw" value="0.8"/>
+    <param name="w_ctrl" value="0.2"/>
+    <param name="w_sway" value="0.3"/>
+    <param name="w_du" value="0.6"/>
+    <param name="w_dyaw" value="0.4"/>
+    <param name="w_cte" value="2.5"/>
+  </node>
+</launch>

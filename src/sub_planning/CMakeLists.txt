@@ -167,6 +167,10 @@ catkin_install_python(PROGRAMS
   scripts/depth_hold_velocity_mux.py
   scripts/mpc_2d_planner.py
   scripts/mpc_dynamic_target_tracker.py
+  scripts/mpc_belief_target_tracker.py
+  scripts/acoustic_range_sensor_sim.py
+  scripts/target_belief_viz.py
+  scripts/target_state_estimator_ekf.py
   scripts/fossen_model_demo.py
   scripts/set_local_position.py
   scripts/tf_baselink_map_node.py
