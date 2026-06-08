@@ -61,14 +61,18 @@ class BeliefAwareMPCTracker:
         self.w_dyaw = float(rospy.get_param('~w_dyaw', 0.4))
         self.w_cte = float(rospy.get_param('~w_cte', 2.5))
         self.w_sigma = float(rospy.get_param('~w_sigma', 1.2))
-        self.w_los_rate = float(rospy.get_param('~w_los_rate', 3.0))
+        self.w_bearing_trace = float(rospy.get_param('~w_bearing_trace', self.w_sigma))
+        self.w_bearing_logdet = float(rospy.get_param('~w_bearing_logdet', 0.0))
+        self.bearing_noise_std = float(rospy.get_param('~bearing_noise_std', 0.08))
+        self.bearing_process_pos = float(rospy.get_param('~bearing_process_pos', 0.05))
+        self.bearing_process_vel = float(rospy.get_param('~bearing_process_vel', 0.10))
+        self.min_bearing_range = float(rospy.get_param('~min_bearing_range', 0.5))
+        self.cov_floor = float(rospy.get_param('~cov_floor', 1e-6))
 
         self.unc_pos_gain = float(rospy.get_param('~unc_pos_gain', 1.0))
         self.unc_vel_gain = float(rospy.get_param('~unc_vel_gain', 0.4))
         self.unc_low = float(rospy.get_param('~unc_low', 1.0))
         self.unc_high = float(rospy.get_param('~unc_high', 8.0))
-        self.sigma_process = float(rospy.get_param('~sigma_process', 0.05))
-        self.sigma_info_gain = float(rospy.get_param('~sigma_info_gain', 6.0))
         self.sigma_min = float(rospy.get_param('~sigma_min', 0.1))
 
         dyn = rospy.get_param('~dynamics', {})
@@ -141,7 +145,7 @@ class BeliefAwareMPCTracker:
         yaw_cmd = ca.SX.sym('Y', self.N)
         w = ca.vertcat(u_cmd, v_cmd, yaw_cmd)
 
-        p = ca.SX.sym('P', 14)
+        p = ca.SX.sym('P', 20)
         rx = p[0]
         ry = p[1]
         rpsi = p[2]
@@ -156,6 +160,12 @@ class BeliefAwareMPCTracker:
         prev_u = p[11]
         prev_v = p[12]
         prev_yaw = p[13]
+        pxx = p[14]
+        pxy = p[15]
+        pyy = p[16]
+        pvxvx = p[17]
+        pvyvy = p[18]
+        pvxvy = p[19]
 
         m = ca.DM([[self.m11, 0.0, 0.0], [0.0, self.m22, self.m23], [0.0, self.m23, self.m33]])
         m_inv = ca.inv(m)
@@ -222,15 +232,28 @@ class BeliefAwareMPCTracker:
             range_err = dist - desired_standoff
             cte = -ca.sin(rpsi) * dx + ca.cos(rpsi) * dy
 
-            rel_vx = tvx - x_dot
-            rel_vy = tvy - y_dot
-            los_rate = (dx * rel_vy - dy * rel_vx) / (dist * dist + 1e-6)
-
             du = u_cmd[_k] - prev_u
             dv = v_cmd[_k] - prev_v
             dyaw = ca.atan2(ca.sin(yaw_cmd[_k] - prev_yaw), ca.cos(yaw_cmd[_k] - prev_yaw))
 
-            sigma = ca.fmax(self.sigma_min, sigma + self.sigma_process * self.dt - self.sigma_info_gain * los_rate * los_rate * self.dt)
+            pxx_pred = pxx + pvxvx * self.dt * self.dt + self.bearing_process_pos * self.dt
+            pxy_pred = pxy + pvxvy * self.dt * self.dt
+            pyy_pred = pyy + pvyvy * self.dt * self.dt + self.bearing_process_pos * self.dt
+            pvxvx = pvxvx + self.bearing_process_vel * self.dt
+            pvyvy = pvyvy + self.bearing_process_vel * self.dt
+
+            r2_bearing = ca.fmax(dx * dx + dy * dy, self.min_bearing_range * self.min_bearing_range)
+            hx = -dy / r2_bearing
+            hy = dx / r2_bearing
+            r_bearing = self.bearing_noise_std * self.bearing_noise_std
+            s_bearing = hx * (pxx_pred * hx + pxy_pred * hy) + hy * (pxy_pred * hx + pyy_pred * hy) + r_bearing
+            kx = (pxx_pred * hx + pxy_pred * hy) / s_bearing
+            ky = (pxy_pred * hx + pyy_pred * hy) / s_bearing
+            pxx = ca.fmax(self.cov_floor, pxx_pred - kx * kx * s_bearing)
+            pxy = pxy_pred - kx * ky * s_bearing
+            pyy = ca.fmax(self.cov_floor, pyy_pred - ky * ky * s_bearing)
+            det_p = ca.fmax(self.cov_floor, pxx * pyy - pxy * pxy)
+            sigma = ca.fmax(self.sigma_min, pxx + pyy + self.unc_vel_gain * (pvxvx + pvyvy))
 
             track_scale = 0.25 + 0.75 * (1.0 - alpha)
             cte_scale = 0.2 + 0.8 * (1.0 - alpha)
@@ -242,8 +265,8 @@ class BeliefAwareMPCTracker:
             j = j + self.w_du * (du * du + dv * dv)
             j = j + self.w_dyaw * (dyaw * dyaw)
             j = j + self.w_cte * cte_scale * (cte * cte)
-            j = j + self.w_sigma * sigma
-            j = j - self.w_los_rate * alpha * (los_rate * los_rate)
+            j = j + self.w_bearing_trace * (pxx + pyy)
+            j = j + self.w_bearing_logdet * ca.log(det_p)
 
             prev_u = u_cmd[_k]
             prev_v = v_cmd[_k]
@@ -265,7 +288,10 @@ class BeliefAwareMPCTracker:
         term_alpha = ca.fmin(1.0, ca.fmax(0.0, (sigma - self.unc_low) / max(self.unc_high - self.unc_low, 1e-6)))
         term_desired = (1.0 - term_alpha) * self.desired_standoff + term_alpha * self.exploration_standoff
         term_range_err = term_dist - term_desired
-        j = j + self.w_terminal_track * (term_range_err * term_range_err) + self.w_sigma * sigma
+        term_det = ca.fmax(self.cov_floor, pxx * pyy - pxy * pxy)
+        j = j + self.w_terminal_track * (term_range_err * term_range_err)
+        j = j + self.w_bearing_trace * (pxx + pyy)
+        j = j + self.w_bearing_logdet * ca.log(term_det)
 
         nlp = {'x': w, 'f': j, 'g': ca.vertcat(*g), 'p': p}
         opts = {
@@ -360,6 +386,12 @@ class BeliefAwareMPCTracker:
             self.last_cmd_u,
             self.last_cmd_v,
             self.last_cmd_yaw,
+            max(self.cov_floor, self.target_cov_xx),
+            self.target_cov_xy,
+            max(self.cov_floor, self.target_cov_yy),
+            max(self.cov_floor, self.target_cov_vxvx),
+            max(self.cov_floor, self.target_cov_vyvy),
+            self.target_cov_vxvy,
         ]
 
         args = {'x0': x0, 'lbx': self.lbx, 'ubx': self.ubx, 'lbg': self.lbg, 'ubg': self.ubg, 'p': p}

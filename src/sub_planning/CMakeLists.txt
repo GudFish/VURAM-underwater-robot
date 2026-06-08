@@ -169,8 +169,12 @@ catkin_install_python(PROGRAMS
   scripts/mpc_dynamic_target_tracker.py
   scripts/mpc_belief_target_tracker.py
   scripts/acoustic_range_sensor_sim.py
+  scripts/acoustic_tdoa_sensor_sim.py
+  scripts/tdoa_bearing_estimator.py
   scripts/target_belief_viz.py
   scripts/target_state_estimator_ekf.py
+  scripts/target_bearing_estimator_ekf.py
+  scripts/target_bearing_window_ls.py
   scripts/fossen_model_demo.py
   scripts/set_local_position.py
   scripts/tf_baselink_map_node.py

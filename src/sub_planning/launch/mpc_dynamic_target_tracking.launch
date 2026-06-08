@@ -20,33 +20,61 @@
 
   <node name="dynamic_target_generator" pkg="sub_planning" type="dynamic_target_generator.py" output="screen"/>
 
-  <node name="acoustic_range_sensor_sim" pkg="sub_planning" type="acoustic_range_sensor_sim.py" output="screen">
+  <node name="acoustic_tdoa_sensor_sim" pkg="sub_planning" type="acoustic_tdoa_sensor_sim.py" output="screen">
     <param name="state_topic" value="/mavros/state"/>
     <param name="robot_odom_topic" value="/mavros/local_position/odom"/>
     <param name="target_pose_topic" value="/dynamic_target/pose"/>
-    <param name="range_topic" value="/target_acoustic_range"/>
-    <param name="measurement_rate" value="1.0"/>
-    <param name="range_noise_std" value="0.4"/>
+    <param name="tdoa_topic" value="/target_acoustic_tdoa"/>
+    <param name="measurement_rate" value="2.0"/>
+    <param name="sound_speed" value="1500.0"/>
+    <param name="tdoa_noise_std" value="2.0e-5"/>
+    <param name="beacon_ref" value="0"/>
+    <rosparam param="beacons_body">[[0.65, 0.60], [-0.65, 0.60], [0.65, -0.60], [-0.65, -0.60]]</rosparam>
     <param name="max_range" value="80.0"/>
     <param name="drop_prob" value="0.15"/>
     <param name="reset_on_disarm" value="True"/>
   </node>
 
-  <node name="target_state_estimator_ekf" pkg="sub_planning" type="target_state_estimator_ekf.py" output="screen">
+  <node name="tdoa_bearing_estimator" pkg="sub_planning" type="tdoa_bearing_estimator.py" output="screen">
+    <param name="odom_topic" value="/mavros/local_position/odom"/>
+    <param name="tdoa_topic" value="/target_acoustic_tdoa"/>
+    <param name="bearing_topic" value="/target_acoustic_bearing"/>
+    <param name="debug_topic" value="/target_acoustic_bearing_debug"/>
+    <param name="sound_speed" value="1500.0"/>
+    <param name="beacon_ref" value="0"/>
+    <rosparam param="beacons_body">[[0.65, 0.60], [-0.65, 0.60], [0.65, -0.60], [-0.65, -0.60]]</rosparam>
+  </node>
+
+  <node name="target_bearing_window_ls" pkg="sub_planning" type="target_bearing_window_ls.py" output="screen">
     <param name="robot_odom_topic" value="/mavros/local_position/odom"/>
     <param name="state_topic" value="/mavros/state"/>
-    <param name="range_topic" value="/target_acoustic_range"/>
+    <param name="bearing_topic" value="/target_acoustic_bearing"/>
     <param name="target_pose_topic" value="/target_estimate/pose"/>
     <param name="target_twist_topic" value="/target_estimate/twist"/>
     <param name="belief_topic" value="/target_estimate/belief"/>
     <param name="filter_rate" value="10.0"/>
-    <param name="range_noise_std" value="0.4"/>
-    <param name="use_prior_init" value="False"/>
+    <param name="window_size" value="16"/>
+    <param name="min_samples" value="5"/>
+    <param name="max_sample_age" value="12.0"/>
+    <param name="bearing_noise_std" value="0.10"/>
+    <param name="lm_max_iter" value="12"/>
+    <param name="lm_tol" value="1e-5"/>
+    <param name="lm_lambda" value="1e-3"/>
+    <param name="robust_huber_delta" value="0.25"/>
+    <param name="reg_position" value="1e-6"/>
+    <param name="reg_velocity" value="1e-4"/>
+    <param name="max_speed" value="2.0"/>
+    <param name="max_distance" value="100.0"/>
+    <param name="covariance_cap" value="10000.0"/>
     <param name="reset_on_disarm" value="True"/>
-    <rosparam param="process_noise_diag">[0.5, 0.5, 0.8, 0.8]</rosparam>
-    <rosparam param="init_mean">[8.0, 0.0, 0.4, 0.0]</rosparam>
-    <rosparam param="init_cov_diag">[9.0, 9.0, 1.0, 1.0]</rosparam>
-    <param name="auto_init_range_angle" value="0.35"/>
+  </node>
+
+  <node name="target_belief_viz" pkg="sub_planning" type="target_belief_viz.py" output="screen">
+    <param name="belief_topic" value="/target_estimate/belief"/>
+    <param name="marker_topic" value="/target_estimate/belief_marker"/>
+    <param name="ellipse_sigma" value="2.0"/>
+    <param name="show_trace" value="True"/>
+    <param name="show_pos_std" value="True"/>
   </node>
 
   <node name="mpc_dynamic_target_tracker" pkg="sub_planning" type="mpc_dynamic_target_tracker.py" output="screen">

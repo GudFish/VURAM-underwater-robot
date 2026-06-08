@@ -57,11 +57,47 @@ if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/depth_hold_velocity_mux.py")
+endif()
+
+if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
   file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/mpc_2d_planner.py")
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
   file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/mpc_dynamic_target_tracker.py")
+endif()
+
+if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/mpc_belief_target_tracker.py")
+endif()
+
+if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/acoustic_range_sensor_sim.py")
+endif()
+
+if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/acoustic_tdoa_sensor_sim.py")
+endif()
+
+if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/tdoa_bearing_estimator.py")
+endif()
+
+if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/target_belief_viz.py")
+endif()
+
+if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/target_state_estimator_ekf.py")
+endif()
+
+if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/target_bearing_estimator_ekf.py")
+endif()
+
+if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/target_bearing_window_ls.py")
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
@@ -82,9 +118,5 @@ endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
   file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/dynamic_target_generator.py")
-endif()
-
-if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/sub_planning" TYPE PROGRAM FILES "/home/lhy/ardupilot_ws/build/sub_planning/catkin_generated/installspace/target_tracking_pos.py")
 endif()
 

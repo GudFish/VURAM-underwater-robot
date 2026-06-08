@@ -12,16 +12,25 @@ from std_msgs.msg import Float32
 class CombinedPlanner:
     def __init__(self):
         rospy.init_node('combined_planner', anonymous=True)
+
+        self.state_topic = rospy.get_param('~state_topic', '/mavros/state')
+        self.odom_topic = rospy.get_param('~odom_topic', '/mavros/local_position/odom')
+        self.cmd_vel_topic = rospy.get_param('~cmd_vel_topic', '/target_velocity')
+        self.target_yaw_topic = rospy.get_param('~target_yaw_topic', '/target_yaw')
+        self.setpoint_topic = rospy.get_param('~setpoint_topic', '/mavros/setpoint_raw/local')
+        self.attitude_topic = rospy.get_param('~attitude_topic', '/mavros/setpoint_raw/attitude')
+        self.control_rate = rospy.get_param('~control_rate', 10.0)
+        self.timeout = rospy.get_param('~timeout', 0.5)
         
         # ---- 订阅 ----
-        self.state_sub = rospy.Subscriber('/mavros/state', State, self.state_cb)
-        self.odom_sub = rospy.Subscriber('/mavros/local_position/odom', Odometry, self.odom_cb)
-        self.cmd_vel_sub = rospy.Subscriber('/target_velocity', Twist, self.cmd_vel_cb)
-        self.target_yaw_sub = rospy.Subscriber('/target_yaw', Float32, self.target_yaw_cb)
+        self.state_sub = rospy.Subscriber(self.state_topic, State, self.state_cb)
+        self.odom_sub = rospy.Subscriber(self.odom_topic, Odometry, self.odom_cb)
+        self.cmd_vel_sub = rospy.Subscriber(self.cmd_vel_topic, Twist, self.cmd_vel_cb)
+        self.target_yaw_sub = rospy.Subscriber(self.target_yaw_topic, Float32, self.target_yaw_cb)
 
         # ---- 发布 ----
-        self.vel_pub = rospy.Publisher('/mavros/setpoint_raw/local', PositionTarget, queue_size=10)
-        self.att_pub = rospy.Publisher('/mavros/setpoint_raw/attitude', AttitudeTarget, queue_size=10)
+        self.vel_pub = rospy.Publisher(self.setpoint_topic, PositionTarget, queue_size=10)
+        self.att_pub = rospy.Publisher(self.attitude_topic, AttitudeTarget, queue_size=10)
 
         # ---- 状态变量 ----
         self.current_state = State()
@@ -39,13 +48,14 @@ class CombinedPlanner:
         self.vel_received = False
         self.yaw_received = False
 
-        # 超时阈值（秒）
-        self.timeout = 0.5
+        # 定时器：可配置频率
+        period = 1.0 / max(self.control_rate, 1e-3)
+        self.timer = rospy.Timer(rospy.Duration(period), self.control_loop)
 
-        # 定时器：10Hz
-        self.timer = rospy.Timer(rospy.Duration(0.1), self.control_loop)
-
-        rospy.loginfo("Combined Planner waiting for external velocity/yaw commands...")
+        rospy.loginfo(
+            "Combined Planner waiting for external velocity/yaw commands at %.1f Hz...",
+            self.control_rate,
+        )
 
     def state_cb(self, msg):
         self.current_state = msg

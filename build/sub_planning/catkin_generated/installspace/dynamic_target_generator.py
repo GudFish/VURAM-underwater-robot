@@ -47,17 +47,17 @@ class DynamicTargetGenerator:
         
         # 运动参数
         # 使用平滑的“速度 + 航向角 + 转率”模型，避免布朗式抖动轨迹。
-        self.speed_min = 0.15
-        self.speed_max = 0.50
-        self.speed = np.random.uniform(0.20, 0.40)
+        self.speed_min = 0.25
+        self.speed_max = 0.75
+        self.speed = np.random.uniform(0.35, 0.55)
         self.heading = np.random.uniform(-math.pi, math.pi)
         self.turn_rate = 0.0
-        self.speed_tau = 3.0
+        self.speed_tau = 2.5
         self.turn_tau = 4.0
-        self.speed_noise_std = 0.08
-        self.turn_noise_std = 0.10
-        self.max_turn_rate = 0.35
-        self.boundary_margin = 1.5
+        self.speed_noise_std = 0.06
+        self.turn_noise_std = 0.08
+        self.max_turn_rate = 0.32
+        self.boundary_margin = 2.0
         self.maneuver_mode = 'straight'
         self.mode_change_time = rospy.Time.now()
         self.mode_duration = rospy.Duration(np.random.uniform(4.0, 8.0))
@@ -87,26 +87,26 @@ class DynamicTargetGenerator:
 
     def pick_new_mode(self):
         modes = ['straight', 'turn_left', 'turn_right', 'accelerate', 'decelerate']
-        weights = np.array([0.35, 0.18, 0.18, 0.14, 0.15], dtype=float)
+        weights = np.array([0.52, 0.12, 0.12, 0.14, 0.10], dtype=float)
         self.maneuver_mode = np.random.choice(modes, p=weights / np.sum(weights))
         self.mode_change_time = rospy.Time.now()
         self.mode_duration = rospy.Duration(np.random.uniform(4.0, 8.0))
 
         if self.maneuver_mode == 'straight':
             self.mode_target_turn_rate = 0.0
-            self.mode_target_speed = np.clip(self.speed + np.random.uniform(-0.04, 0.04), self.speed_min, self.speed_max)
+            self.mode_target_speed = np.clip(self.speed + np.random.uniform(-0.03, 0.06), self.speed_min, self.speed_max)
         elif self.maneuver_mode == 'turn_left':
-            self.mode_target_turn_rate = np.random.uniform(0.12, 0.28)
-            self.mode_target_speed = np.clip(self.speed + np.random.uniform(-0.03, 0.02), self.speed_min, self.speed_max)
+            self.mode_target_turn_rate = np.random.uniform(0.10, 0.22)
+            self.mode_target_speed = np.clip(self.speed + np.random.uniform(-0.04, 0.02), self.speed_min, self.speed_max)
         elif self.maneuver_mode == 'turn_right':
-            self.mode_target_turn_rate = -np.random.uniform(0.12, 0.28)
-            self.mode_target_speed = np.clip(self.speed + np.random.uniform(-0.03, 0.02), self.speed_min, self.speed_max)
+            self.mode_target_turn_rate = -np.random.uniform(0.10, 0.22)
+            self.mode_target_speed = np.clip(self.speed + np.random.uniform(-0.04, 0.02), self.speed_min, self.speed_max)
         elif self.maneuver_mode == 'accelerate':
-            self.mode_target_turn_rate = np.random.uniform(-0.06, 0.06)
-            self.mode_target_speed = np.random.uniform(max(self.speed, 0.32), self.speed_max)
+            self.mode_target_turn_rate = np.random.uniform(-0.05, 0.05)
+            self.mode_target_speed = np.random.uniform(max(self.speed, 0.50), self.speed_max)
         else:
-            self.mode_target_turn_rate = np.random.uniform(-0.06, 0.06)
-            self.mode_target_speed = np.random.uniform(self.speed_min, min(self.speed, 0.28))
+            self.mode_target_turn_rate = np.random.uniform(-0.05, 0.05)
+            self.mode_target_speed = np.random.uniform(self.speed_min, min(self.speed, 0.40))
     
     def update_position(self, dt):
         """更新位置，使用分模式机动 + 平滑连续转弯/变速模型。"""
@@ -125,8 +125,8 @@ class DynamicTargetGenerator:
 
         if boundary_gain > 0.05:
             heading_error = self.wrap_pi(center_heading - self.heading)
-            desired_turn_rate = heading_error / max(self.turn_tau, 1e-3)
-            desired_speed = 0.30 - 0.08 * boundary_gain
+            desired_turn_rate = np.clip(1.4 * heading_error / max(self.turn_tau, 1e-3), -self.max_turn_rate, self.max_turn_rate)
+            desired_speed = max(self.speed_min, 0.42 - 0.12 * boundary_gain)
         else:
             desired_turn_rate = self.mode_target_turn_rate
             desired_speed = self.mode_target_speed
@@ -149,17 +149,19 @@ class DynamicTargetGenerator:
 
         # 边界检查与柔性回退
         if not self.is_inside(new_pos):
-            reflect_heading = math.atan2(-to_center[1], -to_center[0])
-            self.heading = self.wrap_pi(reflect_heading)
-            self.turn_rate = -0.5 * self.turn_rate
-            self.speed = max(self.speed_min, 0.7 * self.speed)
+            # 撞边后直接朝场地中心重新定向，避免沿边界切向顺移。
+            self.heading = self.wrap_pi(center_heading + np.random.uniform(-0.12, 0.12))
+            self.turn_rate = 0.0
+            self.speed = max(self.speed_min, 0.75 * self.speed)
             self.velocity = np.array(
                 [self.speed * math.cos(self.heading), self.speed * math.sin(self.heading)],
                 dtype=float,
             )
             new_pos = self.pos + self.velocity * dt
             if not self.is_inside(new_pos):
-                new_pos = self.pos + 0.2 * to_center
+                norm = max(np.linalg.norm(to_center), 1e-6)
+                new_pos = self.pos + 0.35 * to_center / norm
+            self.pick_new_mode()
         
         self.pos = new_pos
     
