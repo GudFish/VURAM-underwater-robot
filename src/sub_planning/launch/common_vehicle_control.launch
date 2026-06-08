@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="pos_ctrl" default="False"/>
+  <arg name="vel_ctrl_rate" default="20.0"/>
+  <arg name="depth_mux" default="True"/>
+  <arg name="input_vel_topic" default="/target_velocity_xy"/>
+  <arg name="output_vel_topic" default="/target_velocity"/>
+  <arg name="odom_topic" default="/mavros/local_position/odom"/>
+  <arg name="state_topic" default="/mavros/state"/>
+
+  <include file="$(find sub_planning)/launch/AUV_ctrl.launch">
+    <arg name="pos_ctrl" value="$(arg pos_ctrl)"/>
+    <arg name="vel_ctrl_rate" value="$(arg vel_ctrl_rate)"/>
+  </include>
+
+  <node name="depth_hold_velocity_mux" pkg="sub_planning" type="depth_hold_velocity_mux.py" output="screen" if="$(arg depth_mux)">
+    <param name="input_vel_topic" value="$(arg input_vel_topic)"/>
+    <param name="output_vel_topic" value="$(arg output_vel_topic)"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="state_topic" value="$(arg state_topic)"/>
+    <param name="control_rate" value="20.0"/>
+    <param name="depth_kp" value="0.9"/>
+    <param name="depth_kd" value="0.6"/>
+    <param name="max_abs_vz" value="0.25"/>
+    <param name="depth_deadband" value="0.03"/>
+    <param name="vz_deadband" value="0.02"/>
+  </node>
+</launch>

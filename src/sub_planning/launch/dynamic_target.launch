@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="robot_odom_topic" default="/mavros/local_position/odom"/>
+  <arg name="init_near_robot" default="True"/>
+  <arg name="init_min_radius" default="6.0"/>
+  <arg name="init_max_radius" default="12.0"/>
+  <arg name="init_sample_attempts" default="80"/>
+  <arg name="wait_robot_odom_timeout" default="10.0"/>
+
+  <node name="dynamic_target_generator" pkg="sub_planning" type="dynamic_target_generator.py" output="screen">
+    <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>
+    <param name="init_near_robot" value="$(arg init_near_robot)"/>
+    <param name="init_min_radius" value="$(arg init_min_radius)"/>
+    <param name="init_max_radius" value="$(arg init_max_radius)"/>
+    <param name="init_sample_attempts" value="$(arg init_sample_attempts)"/>
+    <param name="wait_robot_odom_timeout" value="$(arg wait_robot_odom_timeout)"/>
+  </node>
+</launch>

@@ -163,23 +163,21 @@ include_directories(
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
 catkin_install_python(PROGRAMS
-  scripts/set_body_vel_yaw.py
-  scripts/depth_hold_velocity_mux.py
-  scripts/mpc_2d_planner.py
-  scripts/mpc_dynamic_target_tracker.py
-  scripts/mpc_belief_target_tracker.py
-  scripts/acoustic_range_sensor_sim.py
-  scripts/acoustic_tdoa_sensor_sim.py
-  scripts/tdoa_bearing_estimator.py
-  scripts/target_belief_viz.py
-  scripts/target_state_estimator_ekf.py
-  scripts/target_bearing_estimator_ekf.py
-  scripts/target_bearing_window_ls.py
-  scripts/fossen_model_demo.py
-  scripts/set_local_position.py
-  scripts/tf_baselink_map_node.py
-  scripts/boundary_loader.py
-  scripts/dynamic_target_generator.py
+  scripts/control/set_body_vel_yaw.py
+  scripts/control/depth_hold_velocity_mux.py
+  scripts/planners/mpc_2d_planner.py
+  scripts/planners/mpc_dynamic_target_tracker.py
+  scripts/planners/mpc_belief_target_tracker.py
+  scripts/sensors/acoustic_tdoa_sensor_sim.py
+  scripts/sensors/tdoa_bearing_estimator.py
+  scripts/visualization/target_belief_viz.py
+  scripts/estimators/target_bearing_estimator_ekf.py
+  scripts/estimators/target_bearing_window_ls.py
+  scripts/demos/fossen_model_demo.py
+  scripts/control/set_local_position.py
+  scripts/visualization/tf_baselink_map_node.py
+  scripts/visualization/boundary_loader.py
+  scripts/planners/dynamic_target_generator.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

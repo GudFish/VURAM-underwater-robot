@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="state_topic" default="/mavros/state"/>
+  <arg name="robot_odom_topic" default="/mavros/local_position/odom"/>
+  <arg name="target_pose_topic" default="/dynamic_target/pose"/>
+  <arg name="tdoa_topic" default="/target_acoustic_tdoa"/>
+  <arg name="bearing_topic" default="/target_acoustic_bearing"/>
+  <arg name="bearing_debug_topic" default="/target_acoustic_bearing_debug"/>
+  <arg name="measurement_rate" default="2.0"/>
+  <arg name="sound_speed" default="1500.0"/>
+  <arg name="tdoa_noise_std" default="2.0e-5"/>
+  <arg name="beacon_ref" default="0"/>
+  <arg name="max_range" default="80.0"/>
+  <arg name="drop_prob" default="0.15"/>
+  <arg name="reset_on_disarm" default="True"/>
+
+  <node name="acoustic_tdoa_sensor_sim" pkg="sub_planning" type="acoustic_tdoa_sensor_sim.py" output="screen">
+    <param name="state_topic" value="$(arg state_topic)"/>
+    <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>
+    <param name="target_pose_topic" value="$(arg target_pose_topic)"/>
+    <param name="tdoa_topic" value="$(arg tdoa_topic)"/>
+    <param name="measurement_rate" value="$(arg measurement_rate)"/>
+    <param name="sound_speed" value="$(arg sound_speed)"/>
+    <param name="tdoa_noise_std" value="$(arg tdoa_noise_std)"/>
+    <param name="beacon_ref" value="$(arg beacon_ref)"/>
+    <rosparam param="beacons_body">[[0.65, 0.60], [-0.65, 0.60], [0.65, -0.60], [-0.65, -0.60]]</rosparam>
+    <param name="max_range" value="$(arg max_range)"/>
+    <param name="drop_prob" value="$(arg drop_prob)"/>
+    <param name="reset_on_disarm" value="$(arg reset_on_disarm)"/>
+  </node>
+
+  <node name="tdoa_bearing_estimator" pkg="sub_planning" type="tdoa_bearing_estimator.py" output="screen">
+    <param name="odom_topic" value="$(arg robot_odom_topic)"/>
+    <param name="tdoa_topic" value="$(arg tdoa_topic)"/>
+    <param name="bearing_topic" value="$(arg bearing_topic)"/>
+    <param name="debug_topic" value="$(arg bearing_debug_topic)"/>
+    <param name="sound_speed" value="$(arg sound_speed)"/>
+    <param name="beacon_ref" value="$(arg beacon_ref)"/>
+    <rosparam param="beacons_body">[[0.65, 0.60], [-0.65, 0.60], [0.65, -0.60], [-0.65, -0.60]]</rosparam>
+  </node>
+</launch>

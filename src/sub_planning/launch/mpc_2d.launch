@@ -1,23 +1,13 @@
 <?xml version="1.0"?>
 <launch>
-  <!-- 启动飞控桥接与控制发送节点 -->
-  <include file="$(find sub_planning)/launch/AUV_ctrl.launch">
+  <!-- 启动飞控桥接、控制发送和定深速度复用链路 -->
+  <include file="$(find sub_planning)/launch/common_vehicle_control.launch">
     <arg name="pos_ctrl" value="False"/>
     <arg name="vel_ctrl_rate" value="20.0"/>
+    <arg name="depth_mux" value="True"/>
+    <arg name="input_vel_topic" value="/target_velocity_xy"/>
+    <arg name="output_vel_topic" value="/target_velocity"/>
   </include>
-
-  <node name="depth_hold_velocity_mux" pkg="sub_planning" type="depth_hold_velocity_mux.py" output="screen">
-    <param name="input_vel_topic" value="/target_velocity_xy"/>
-    <param name="output_vel_topic" value="/target_velocity"/>
-    <param name="odom_topic" value="/mavros/local_position/odom"/>
-    <param name="state_topic" value="/mavros/state"/>
-    <param name="control_rate" value="20.0"/>
-    <param name="depth_kp" value="0.9"/>
-    <param name="depth_kd" value="0.6"/>
-    <param name="max_abs_vz" value="0.25"/>
-    <param name="depth_deadband" value="0.03"/>
-    <param name="vz_deadband" value="0.02"/>
-  </node>
 
   <!-- 二维MPC轨迹规划节点 -->
   <node name="mpc_2d_planner" pkg="sub_planning" type="mpc_2d_planner.py" output="screen">

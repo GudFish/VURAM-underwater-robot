@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="belief_topic" default="/target_estimate/belief"/>
+  <arg name="marker_topic" default="/target_estimate/belief_marker"/>
+
+  <node name="target_belief_viz" pkg="sub_planning" type="target_belief_viz.py" output="screen">
+    <param name="belief_topic" value="$(arg belief_topic)"/>
+    <param name="marker_topic" value="$(arg marker_topic)"/>
+    <param name="ellipse_sigma" value="2.0"/>
+    <param name="show_trace" value="True"/>
+    <param name="show_pos_std" value="True"/>
+  </node>
+</launch>

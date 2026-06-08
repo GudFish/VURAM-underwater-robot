@@ -4,11 +4,21 @@ import math
 import rospy
 import numpy as np
 from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Odometry
 from shapely.geometry import Point, Polygon
 
 class DynamicTargetGenerator:
     def __init__(self):
         rospy.init_node('dynamic_target_generator')
+        self.robot_odom_topic = rospy.get_param('~robot_odom_topic', '/mavros/local_position/odom')
+        self.init_near_robot = rospy.get_param('~init_near_robot', True)
+        self.init_min_radius = float(rospy.get_param('~init_min_radius', 6.0))
+        self.init_max_radius = float(rospy.get_param('~init_max_radius', 12.0))
+        self.init_sample_attempts = int(rospy.get_param('~init_sample_attempts', 80))
+        self.wait_robot_odom_timeout = float(rospy.get_param('~wait_robot_odom_timeout', 10.0))
+        self.have_robot_odom = False
+        self.robot_xy = np.array([0.0, 0.0], dtype=float)
+        self.odom_sub = rospy.Subscriber(self.robot_odom_topic, Odometry, self.odom_cb, queue_size=1)
         
         # --- 等待边界参数加载完成 ---
         timeout = rospy.Duration(60.0)  # 最长等待30秒
@@ -36,14 +46,8 @@ class DynamicTargetGenerator:
         if not self.boundary_polygon.is_valid:
             self.boundary_polygon = self.boundary_polygon.buffer(0)  # 尝试修复无效多边形
         
-        # 随机初始化目标位置在多边形内部
-        min_x, min_y, max_x, max_y = self.boundary_polygon.bounds
-        self.pos = np.array([0.0, 0.0])
-        while not self.boundary_polygon.contains(Point(self.pos)):
-            self.pos = np.array([
-                np.random.uniform(min_x, max_x),
-                np.random.uniform(min_y, max_y)
-            ])
+        self.wait_for_robot_odom()
+        self.pos = self.sample_initial_position()
         
         # 运动参数
         # 使用平滑的“速度 + 航向角 + 转率”模型，避免布朗式抖动轨迹。
@@ -73,6 +77,65 @@ class DynamicTargetGenerator:
         self.rate = rospy.Rate(10)  # 10 Hz
         
         rospy.loginfo("动态目标生成器已启动，边界内初始位置: (%.2f, %.2f)", self.pos[0], self.pos[1])
+
+    def odom_cb(self, msg):
+        self.robot_xy = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y], dtype=float)
+        self.have_robot_odom = True
+
+    def wait_for_robot_odom(self):
+        if not self.init_near_robot:
+            return
+        start = rospy.Time.now()
+        rate = rospy.Rate(20)
+        while not rospy.is_shutdown() and not self.have_robot_odom:
+            if (rospy.Time.now() - start).to_sec() > self.wait_robot_odom_timeout:
+                rospy.logwarn(
+                    "[DynamicTarget] waiting for robot odom timed out after %.1fs, falling back to global boundary sampling.",
+                    self.wait_robot_odom_timeout,
+                )
+                return
+            rospy.loginfo_throttle(2.0, "[DynamicTarget] waiting for robot odom: %s", self.robot_odom_topic)
+            rate.sleep()
+
+    def sample_global_position(self):
+        min_x, min_y, max_x, max_y = self.boundary_polygon.bounds
+        while not rospy.is_shutdown():
+            pos = np.array([np.random.uniform(min_x, max_x), np.random.uniform(min_y, max_y)], dtype=float)
+            if self.boundary_polygon.contains(Point(pos)):
+                return pos
+        return np.array([0.0, 0.0], dtype=float)
+
+    def sample_initial_position(self):
+        if not self.init_near_robot or not self.have_robot_odom:
+            pos = self.sample_global_position()
+            rospy.loginfo("[DynamicTarget] global initial target position: (%.2f, %.2f)", pos[0], pos[1])
+            return pos
+
+        r_min = max(0.0, min(self.init_min_radius, self.init_max_radius))
+        r_max = max(r_min, self.init_max_radius)
+        for _ in range(max(self.init_sample_attempts, 1)):
+            radius = math.sqrt(np.random.uniform(r_min * r_min, r_max * r_max))
+            angle = np.random.uniform(-math.pi, math.pi)
+            pos = self.robot_xy + radius * np.array([math.cos(angle), math.sin(angle)], dtype=float)
+            if self.boundary_polygon.contains(Point(pos)):
+                rospy.loginfo(
+                    "[DynamicTarget] initial target sampled near robot: robot=(%.2f, %.2f), target=(%.2f, %.2f), radius=%.2f",
+                    self.robot_xy[0],
+                    self.robot_xy[1],
+                    pos[0],
+                    pos[1],
+                    radius,
+                )
+                return pos
+
+        pos = self.sample_global_position()
+        rospy.logwarn(
+            "[DynamicTarget] failed to sample near robot after %d attempts, global fallback target=(%.2f, %.2f)",
+            self.init_sample_attempts,
+            pos[0],
+            pos[1],
+        )
+        return pos
     
     def is_inside(self, point):
         """检查点是否在边界内部"""
