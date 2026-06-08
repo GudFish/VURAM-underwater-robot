@@ -1,0 +1,31 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python packaging
+*.egg-info/
+build/lib/
+dist/
+.eggs/
+
+# ROS/catkin generated workspace outputs
+/build/
+/devel/
+/install/
+/log/
+/logs/
+.catkin_tools/
+
+# ROS runtime logs and bags
+.ros/
+*.bag
+*.bag.active
+
+# Editor/OS noise
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
