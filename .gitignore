@@ -19,6 +19,7 @@ dist/
 
 # ROS runtime logs and bags
 .ros/
+/bagfiles/
 *.bag
 *.bag.active
 
