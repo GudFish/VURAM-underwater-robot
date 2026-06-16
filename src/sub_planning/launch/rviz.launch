@@ -1,7 +1,8 @@
 <?xml version="1.0"?>
 <launch>
     <!-- 1. 将机器人模型加载到 ROS 参数服务器 -->
-    <param name="robot_description" textfile="$(find sub_planning)/urdf/AUV.urdf" />
+    <!-- <param name="robot_description" textfile="$(find sub_planning)/urdf/AUV.urdf" /> -->
+    <param name="robot_description" textfile="$(find sub_planning)/urdf/open_frame_AUV.urdf" />
 
     <!-- 2. 启动 robot_state_publisher，它负责将 URDF 中的模型信息发布为 TF 变换 -->
     <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" />

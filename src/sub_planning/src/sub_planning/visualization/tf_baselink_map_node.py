@@ -13,11 +13,11 @@ class TFBroadcasterNode:
         # --- 修正四元数配置 ---
         # 根据你的颠倒情况，选择下面其中一种修正（注释/取消注释）
         # 修正1：绕 X 轴旋转 180°（最常用，适用于 ENU ↔ NED 或上下颠倒）
-        self.correction_quat = tf_trans.quaternion_from_euler(3.14159, 0.0, 0.0)   # (pi, 0, 0)
+        # self.correction_quat = tf_trans.quaternion_from_euler(3.14159, 0.0, 0.0)   # (pi, 0, 0)
         # 修正2：绕 Y 轴旋转 180°（如果前后颠倒且上下颠倒）
         # self.correction_quat = tf_trans.quaternion_from_euler(0.0, 3.14159, 0.0)
         # 修正3：绕 Z 轴旋转 180°（仅水平调头，不解决上下颠倒，一般不用）
-        # self.correction_quat = tf_trans.quaternion_from_euler(0.0, 0.0, 3.14159)
+        self.correction_quat = tf_trans.quaternion_from_euler(0.0, 0.0, 3.14159/2)
         # 修正4：无修正（保持原始朝向）
         # self.correction_quat = [0.0, 0.0, 0.0, 1.0]
         
