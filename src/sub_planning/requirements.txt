@@ -1,0 +1,7 @@
+# Python dependencies that are not covered well by ROS package metadata.
+# Install these after sourcing the target ROS environment.
+casadi
+numpy
+pymap3d
+scipy
+shapely
