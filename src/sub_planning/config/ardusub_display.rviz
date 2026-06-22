@@ -79,7 +79,7 @@ Visualization Manager:
       Axes Radius: 0.10000000149011612
       Class: rviz/Pose
       Color: 255; 25; 0
-      Enabled: true
+      Enabled: false
       Head Length: 0.30000001192092896
       Head Radius: 0.10000000149011612
       Name: Pose
@@ -148,6 +148,14 @@ Visualization Manager:
       Shape: Axes
       Topic: /dynamic_target/pose
       Unreliable: false
+      Value: false
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /dynamic_target/marker
+      Name: Dynamic Target AUV
+      Namespaces:
+        dynamic_target: true
+      Queue Size: 10
       Value: true
     - Alpha: 1
       Axes Length: 1
@@ -172,6 +180,26 @@ Visualization Manager:
       Namespaces:
         target_belief: true
       Queue Size: 20
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /forward_sonar/markers
+      Name: Forward Sonar Range
+      Namespaces:
+        forward_sonar: true
+      Queue Size: 10
+      Value: true
+    - Class: rviz/Image
+      Enabled: true
+      Image Topic: /forward_sonar/image
+      Max Value: 255
+      Median window: 5
+      Min Value: 0
+      Name: Forward Sonar Image
+      Normalize Range: true
+      Queue Size: 2
+      Transport Hint: raw
+      Unreliable: false
       Value: true
   Enabled: true
   Global Options:

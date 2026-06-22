@@ -6,11 +6,21 @@ import numpy as np
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from shapely.geometry import Point, Polygon
+from visualization_msgs.msg import Marker
 
 class DynamicTargetGenerator:
     def __init__(self):
         rospy.init_node('dynamic_target_generator')
         self.robot_odom_topic = rospy.get_param('~robot_odom_topic', '/mavros/local_position/odom')
+        self.target_pose_topic = rospy.get_param('~target_pose_topic', '/dynamic_target/pose')
+        self.target_marker_topic = rospy.get_param('~target_marker_topic', '/dynamic_target/marker')
+        self.target_mesh_resource = rospy.get_param(
+            '~target_mesh_resource',
+            'package://sub_planning/meshes/AUV.STL',
+        )
+        self.target_mesh_scale = float(rospy.get_param('~target_mesh_scale', 1.0))
+        self.target_mesh_z = float(rospy.get_param('~target_mesh_z', 0.0))
+        self.target_mesh_color = rospy.get_param('~target_mesh_color', [1.0, 0.84, 0.0, 0.92])
         self.init_near_robot = rospy.get_param('~init_near_robot', True)
         self.init_min_radius = float(rospy.get_param('~init_min_radius', 6.0))
         self.init_max_radius = float(rospy.get_param('~init_max_radius', 12.0))
@@ -73,7 +83,8 @@ class DynamicTargetGenerator:
         )
         
         # ROS发布者
-        self.pose_pub = rospy.Publisher('/dynamic_target/pose', PoseStamped, queue_size=10)
+        self.pose_pub = rospy.Publisher(self.target_pose_topic, PoseStamped, queue_size=10)
+        self.marker_pub = rospy.Publisher(self.target_marker_topic, Marker, queue_size=10)
         self.rate = rospy.Rate(10)  # 10 Hz
         
         rospy.loginfo("动态目标生成器已启动，边界内初始位置: (%.2f, %.2f)", self.pos[0], self.pos[1])
@@ -239,12 +250,35 @@ class DynamicTargetGenerator:
             msg.header.frame_id = "map"  # 假设ENU坐标系为map
             msg.pose.position.x = self.pos[0]
             msg.pose.position.y = self.pos[1]
-            msg.pose.position.z = 0.0    # 水面目标，Z=0
+            msg.pose.position.z = self.target_mesh_z
             msg.pose.orientation.z = math.sin(0.5 * self.heading)
             msg.pose.orientation.w = math.cos(0.5 * self.heading)
             
             self.pose_pub.publish(msg)
+            self.publish_mesh_marker(msg)
             self.rate.sleep()
+
+    def publish_mesh_marker(self, pose_msg):
+        marker = Marker()
+        marker.header = pose_msg.header
+        marker.ns = "dynamic_target"
+        marker.id = 0
+        marker.type = Marker.MESH_RESOURCE
+        marker.action = Marker.ADD
+        marker.pose = pose_msg.pose
+        marker.scale.x = self.target_mesh_scale
+        marker.scale.y = self.target_mesh_scale
+        marker.scale.z = self.target_mesh_scale
+        marker.mesh_resource = self.target_mesh_resource
+        marker.mesh_use_embedded_materials = False
+        color = list(self.target_mesh_color)
+        while len(color) < 4:
+            color.append(1.0)
+        marker.color.r = float(color[0])
+        marker.color.g = float(color[1])
+        marker.color.b = float(color[2])
+        marker.color.a = float(color[3])
+        self.marker_pub.publish(marker)
 
 if __name__ == '__main__':
     try:

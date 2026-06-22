@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="robot_odom_topic" default="/mavros/local_position/odom"/>
+  <arg name="target_pose_topic" default="/dynamic_target/pose"/>
+  <arg name="image_topic" default="/forward_sonar/image"/>
+  <arg name="marker_topic" default="/forward_sonar/markers"/>
+  <arg name="target_mesh_resource" default="package://sub_planning/meshes/AUV.STL"/>
+  <arg name="target_mesh_scale" default="1.0"/>
+  <arg name="show_range" default="true"/>
+  <arg name="show_window" default="true"/>
+
+  <node name="forward_sonar_sim" pkg="sub_planning" type="forward_sonar_sim.py" output="screen">
+    <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>
+    <param name="target_pose_topic" value="$(arg target_pose_topic)"/>
+    <param name="image_topic" value="$(arg image_topic)"/>
+    <param name="target_model" value="mesh"/>
+    <param name="target_mesh_resource" value="$(arg target_mesh_resource)"/>
+    <param name="target_mesh_scale" value="$(arg target_mesh_scale)"/>
+    <param name="target_mesh_sample_count" value="6000"/>
+    <param name="target_mesh_point_radius" value="0.045"/>
+    <param name="target_mesh_normal_power" value="1.7"/>
+    <param name="target_mesh_occlusion_cell" value="2"/>
+    <param name="output_auto_gain" value="true"/>
+    <param name="output_gain_percentile" value="99.4"/>
+    <param name="publish_waiting_image" value="true"/>
+    <param name="show_range_rings" value="false"/>
+    <param name="range_ring_spacing" value="5.0"/>
+    <param name="publish_rate" value="10.0"/>
+    <param name="fov_deg" value="130.0"/>
+    <param name="max_range" value="30.0"/>
+    <param name="min_range" value="0.2"/>
+    <param name="image_width" value="512"/>
+    <param name="image_height" value="256"/>
+    <param name="use_boundary" value="false"/>
+  </node>
+
+  <node if="$(arg show_range)" name="forward_sonar_range_viz" pkg="sub_planning" type="forward_sonar_range_viz.py" output="screen">
+    <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>
+    <param name="marker_topic" value="$(arg marker_topic)"/>
+    <param name="publish_rate" value="10.0"/>
+    <param name="fov_deg" value="130.0"/>
+    <param name="max_range" value="30.0"/>
+  </node>
+
+  <node if="$(arg show_window)" name="forward_sonar_image_viewer" pkg="sub_planning" type="forward_sonar_image_viewer.py" output="screen">
+    <param name="image_topic" value="$(arg image_topic)"/>
+    <param name="window_name" value="Forward Looking Sonar"/>
+    <param name="colormap" value="true"/>
+    <param name="display_scale" value="1.4"/>
+  </node>
+</launch>

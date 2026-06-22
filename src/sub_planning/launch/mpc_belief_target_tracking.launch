@@ -1,5 +1,8 @@
 <?xml version="1.0"?>
 <launch>
+  <arg name="forward_sonar" default="true"/>
+  <arg name="forward_sonar_window" default="false"/>
+
   <include file="$(find sub_planning)/launch/common_vehicle_control.launch">
     <arg name="pos_ctrl" value="False"/>
     <arg name="vel_ctrl_rate" value="20.0"/>
@@ -12,6 +15,9 @@
   <include file="$(find sub_planning)/launch/acoustic_tdoa_chain.launch"/>
   <include file="$(find sub_planning)/launch/target_bearing_window_ls.launch"/>
   <include file="$(find sub_planning)/launch/target_belief_viz.launch"/>
+  <include if="$(arg forward_sonar)" file="$(find sub_planning)/launch/forward_sonar_sim.launch">
+    <arg name="show_window" value="$(arg forward_sonar_window)"/>
+  </include>
 
   <node name="mpc_belief_target_tracker" pkg="sub_planning" type="mpc_belief_target_tracker.py" output="screen">
     <rosparam command="load" file="$(find sub_planning)/config/fossen3_dynamics.yaml" ns="dynamics"/>
@@ -58,5 +64,16 @@
     <param name="w_du" value="0.6"/>
     <param name="w_dyaw" value="0.4"/>
     <param name="w_cte" value="2.5"/>
+    <param name="sonar_fov_deg" value="130.0"/>
+    <param name="sonar_min_range" value="0.2"/>
+    <param name="sonar_max_range" value="30.0"/>
+    <param name="w_sonar_fov" value="8.0"/>
+    <param name="w_sonar_range" value="2.0"/>
+    <param name="w_sonar_center" value="1.5"/>
+    <param name="w_sonar_front" value="4.0"/>
+    <param name="boundary_param" value="/boundary_loader/enu_points"/>
+    <param name="boundary_margin" value="1.0"/>
+    <param name="boundary_wait_timeout" value="8.0"/>
+    <param name="boundary_required" value="true"/>
   </node>
 </launch>

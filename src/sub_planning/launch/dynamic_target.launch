@@ -6,9 +6,19 @@
   <arg name="init_max_radius" default="12.0"/>
   <arg name="init_sample_attempts" default="80"/>
   <arg name="wait_robot_odom_timeout" default="10.0"/>
+  <arg name="target_pose_topic" default="/dynamic_target/pose"/>
+  <arg name="target_marker_topic" default="/dynamic_target/marker"/>
+  <arg name="target_mesh_resource" default="package://sub_planning/meshes/AUV.STL"/>
+  <arg name="target_mesh_scale" default="1.0"/>
+  <arg name="target_mesh_z" default="0.0"/>
 
   <node name="dynamic_target_generator" pkg="sub_planning" type="dynamic_target_generator.py" output="screen">
     <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>
+    <param name="target_pose_topic" value="$(arg target_pose_topic)"/>
+    <param name="target_marker_topic" value="$(arg target_marker_topic)"/>
+    <param name="target_mesh_resource" value="$(arg target_mesh_resource)"/>
+    <param name="target_mesh_scale" value="$(arg target_mesh_scale)"/>
+    <param name="target_mesh_z" value="$(arg target_mesh_z)"/>
     <param name="init_near_robot" value="$(arg init_near_robot)"/>
     <param name="init_min_radius" value="$(arg init_min_radius)"/>
     <param name="init_max_radius" value="$(arg init_max_radius)"/>

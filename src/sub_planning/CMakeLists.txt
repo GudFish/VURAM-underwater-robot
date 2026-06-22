@@ -11,6 +11,7 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   nav_msgs
   mavros_msgs
+  sensor_msgs
   std_msgs
   visualization_msgs
   rospy
@@ -170,6 +171,7 @@ catkin_install_python(PROGRAMS
   scripts/planners/mpc_belief_target_tracker.py
   scripts/sensors/acoustic_tdoa_sensor_sim.py
   scripts/sensors/tdoa_bearing_estimator.py
+  scripts/sensors/forward_sonar_sim.py
   scripts/visualization/target_belief_viz.py
   scripts/estimators/target_bearing_estimator_ekf.py
   scripts/estimators/target_bearing_window_ls.py
@@ -177,6 +179,8 @@ catkin_install_python(PROGRAMS
   scripts/control/set_local_position.py
   scripts/visualization/tf_baselink_map_node.py
   scripts/visualization/boundary_loader.py
+  scripts/visualization/forward_sonar_range_viz.py
+  scripts/visualization/forward_sonar_image_viewer.py
   scripts/planners/dynamic_target_generator.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

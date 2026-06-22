@@ -8,6 +8,8 @@ from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Float32
 
+from sub_planning.utils.boundary_constraints import load_boundary_halfspaces
+
 
 def wrap_pi(angle):
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
@@ -54,6 +56,18 @@ class DynamicTargetMPCTracker:
         self.w_du = rospy.get_param('~w_du', 0.6)
         self.w_dyaw = rospy.get_param('~w_dyaw', 0.4)
         self.w_cte = rospy.get_param('~w_cte', 2.5)
+        self.sonar_fov_deg = float(rospy.get_param('~sonar_fov_deg', 90.0))
+        self.sonar_min_range = float(rospy.get_param('~sonar_min_range', 0.8))
+        self.sonar_max_range = float(rospy.get_param('~sonar_max_range', 35.0))
+        self.w_sonar_fov = float(rospy.get_param('~w_sonar_fov', 8.0))
+        self.w_sonar_range = float(rospy.get_param('~w_sonar_range', 2.0))
+        self.w_sonar_center = float(rospy.get_param('~w_sonar_center', 1.5))
+        self.w_sonar_front = float(rospy.get_param('~w_sonar_front', 4.0))
+        self.sonar_soft_eps = float(rospy.get_param('~sonar_soft_eps', 1e-6))
+        self.boundary_param = rospy.get_param('~boundary_param', '/boundary_loader/enu_points')
+        self.boundary_margin = float(rospy.get_param('~boundary_margin', 1.0))
+        self.boundary_wait_timeout = float(rospy.get_param('~boundary_wait_timeout', 5.0))
+        self.boundary_required = bool(rospy.get_param('~boundary_required', False))
 
         dyn = rospy.get_param('~dynamics', {})
         self.m11 = float(dyn.get('m11', 40.0))
@@ -91,7 +105,14 @@ class DynamicTargetMPCTracker:
         self.YAW_init = [0.0] * self.N
         self.last_lam_x = None
         self.last_lam_g = None
-
+        self.boundary_halfspaces = []
+        self.boundary_ready = False
+        self.boundary_wait_start = rospy.Time.now()
+        self.solver = None
+        self.lbg = []
+        self.ubg = []
+        self.lbx = []
+        self.ubx = []
         self._build_nlp()
 
         self.odom_sub = rospy.Subscriber(self.odom_topic, Odometry, self.odom_cb, queue_size=1)
@@ -104,6 +125,50 @@ class DynamicTargetMPCTracker:
     @staticmethod
     def _clip(val, vmin, vmax):
         return max(vmin, min(vmax, val))
+
+    def _refresh_boundary_constraints(self):
+        if self.boundary_ready:
+            return True
+
+        elapsed = (rospy.Time.now() - self.boundary_wait_start).to_sec()
+        wait_timeout = self.boundary_wait_timeout if self.boundary_required else 0.0
+        if self.boundary_required and elapsed < wait_timeout and not rospy.has_param(self.boundary_param):
+            rospy.logwarn_throttle(
+                2.0,
+                '[DynamicTargetMPC] waiting for boundary param %s before enabling MPC constraints...',
+                self.boundary_param,
+            )
+            return False
+
+        if not rospy.has_param(self.boundary_param):
+            if self.boundary_required:
+                rospy.logwarn_throttle(
+                    2.0,
+                    '[DynamicTargetMPC] boundary param %s still unavailable; MPC remains paused.',
+                    self.boundary_param,
+                )
+                return False
+            return True
+
+        halfspaces = load_boundary_halfspaces(
+            self.boundary_param,
+            wait_timeout=0.0,
+            required=False,
+            margin=self.boundary_margin,
+        )
+        if self.boundary_required and not halfspaces:
+            rospy.logwarn_throttle(
+                2.0,
+                '[DynamicTargetMPC] boundary param exists but valid constraints are not ready yet.',
+            )
+            return False
+        if halfspaces != self.boundary_halfspaces:
+            self.boundary_halfspaces = halfspaces
+            self._build_nlp()
+            self.last_lam_x = None
+            self.last_lam_g = None
+        self.boundary_ready = True
+        return True
 
     def _build_nlp(self):
         u_cmd = ca.SX.sym('U', self.N)
@@ -133,6 +198,12 @@ class DynamicTargetMPCTracker:
         g = []
         lbg = []
         ubg = []
+        sonar_half_fov = max(math.radians(self.sonar_fov_deg) * 0.5, 1e-3)
+        sonar_max_range = max(self.sonar_max_range, self.sonar_min_range + 1e-3)
+        sonar_range_span = max(sonar_max_range - self.sonar_min_range, 1e-3)
+
+        def softplus_hinge(expr):
+            return 0.5 * (expr + ca.sqrt(expr * expr + self.sonar_soft_eps))
 
         for k in range(self.N):
             e_psi = ca.atan2(ca.sin(yaw_cmd[k] - rpsi), ca.cos(yaw_cmd[k] - rpsi))
@@ -190,6 +261,15 @@ class DynamicTargetMPCTracker:
             dyaw = ca.atan2(ca.sin(yaw_cmd[k] - prev_yaw), ca.cos(yaw_cmd[k] - prev_yaw))
             cte = -ca.sin(rpsi) * dx + ca.cos(rpsi) * dy
 
+            x_body = ca.cos(rpsi) * dx + ca.sin(rpsi) * dy
+            y_body = -ca.sin(rpsi) * dx + ca.cos(rpsi) * dy
+            sonar_bearing = ca.atan2(y_body, x_body)
+            abs_sonar_bearing = ca.sqrt(sonar_bearing * sonar_bearing + self.sonar_soft_eps)
+            fov_violation = softplus_hinge(abs_sonar_bearing - sonar_half_fov)
+            too_close = softplus_hinge(self.sonar_min_range - dist)
+            too_far = softplus_hinge(dist - sonar_max_range)
+            behind = softplus_hinge(-x_body)
+
             j = j + self.w_track * (range_err * range_err)
             j = j + self.w_yaw * yaw_err * yaw_err
             j = j + self.w_ctrl * (u_cmd[k] * u_cmd[k] + v_cmd[k] * v_cmd[k])
@@ -197,6 +277,13 @@ class DynamicTargetMPCTracker:
             j = j + self.w_du * (du * du + dv * dv)
             j = j + self.w_dyaw * (dyaw * dyaw)
             j = j + self.w_cte * (cte * cte)
+            j = j + self.w_sonar_center * (sonar_bearing / sonar_half_fov) * (sonar_bearing / sonar_half_fov)
+            j = j + self.w_sonar_fov * (fov_violation / sonar_half_fov) * (fov_violation / sonar_half_fov)
+            j = j + self.w_sonar_range * (
+                (too_close / sonar_range_span) * (too_close / sonar_range_span)
+                + (too_far / sonar_range_span) * (too_far / sonar_range_span)
+            )
+            j = j + self.w_sonar_front * (behind / max(self.sonar_min_range, 1e-3)) * (behind / max(self.sonar_min_range, 1e-3))
 
             prev_u = u_cmd[k]
             prev_v = v_cmd[k]
@@ -211,12 +298,37 @@ class DynamicTargetMPCTracker:
             g.append(dyaw)
             lbg.append(-self.dyaw_step_max)
             ubg.append(self.dyaw_step_max)
+            for nx, ny, c_boundary in self.boundary_halfspaces:
+                g.append(nx * rx + ny * ry)
+                lbg.append(c_boundary)
+                ubg.append(ca.inf)
 
         term_dx = tx - rx
         term_dy = ty - ry
         term_dist = ca.sqrt(term_dx * term_dx + term_dy * term_dy + 1e-9)
         term_range_err = term_dist - self.desired_standoff
         j = j + self.w_terminal_track * (term_range_err * term_range_err)
+        term_x_body = ca.cos(rpsi) * term_dx + ca.sin(rpsi) * term_dy
+        term_y_body = -ca.sin(rpsi) * term_dx + ca.cos(rpsi) * term_dy
+        term_bearing = ca.atan2(term_y_body, term_x_body)
+        term_abs_bearing = ca.sqrt(term_bearing * term_bearing + self.sonar_soft_eps)
+        term_fov_violation = softplus_hinge(term_abs_bearing - sonar_half_fov)
+        term_too_close = softplus_hinge(self.sonar_min_range - term_dist)
+        term_too_far = softplus_hinge(term_dist - sonar_max_range)
+        term_behind = softplus_hinge(-term_x_body)
+        j = j + self.w_terminal_track * 0.5 * (
+            self.w_sonar_center * (term_bearing / sonar_half_fov) * (term_bearing / sonar_half_fov)
+            + self.w_sonar_fov * (term_fov_violation / sonar_half_fov) * (term_fov_violation / sonar_half_fov)
+            + self.w_sonar_range * (
+                (term_too_close / sonar_range_span) * (term_too_close / sonar_range_span)
+                + (term_too_far / sonar_range_span) * (term_too_far / sonar_range_span)
+            )
+            + self.w_sonar_front * (term_behind / max(self.sonar_min_range, 1e-3)) * (term_behind / max(self.sonar_min_range, 1e-3))
+        )
+        for nx, ny, c_boundary in self.boundary_halfspaces:
+            g.append(nx * rx + ny * ry)
+            lbg.append(c_boundary)
+            ubg.append(ca.inf)
 
         nlp = {'x': w, 'f': j, 'g': ca.vertcat(*g), 'p': p}
         opts = {
@@ -346,6 +458,10 @@ class DynamicTargetMPCTracker:
                 continue
             if not self.have_target:
                 rospy.logwarn_throttle(2.0, '[DynamicTargetMPC] waiting for target pose...')
+                rate.sleep()
+                continue
+            if not self._refresh_boundary_constraints():
+                self.publish_cmd(0.0, 0.0, self.last_cmd_yaw)
                 rate.sleep()
                 continue
 
