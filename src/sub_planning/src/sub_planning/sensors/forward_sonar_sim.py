@@ -56,6 +56,8 @@ class ForwardSonarSim:
         self.target_mesh_grazing_gain = float(rospy.get_param('~target_mesh_grazing_gain', 0.10))
         self.target_mesh_occlusion_cell = int(rospy.get_param('~target_mesh_occlusion_cell', 2))
         self.target_mesh_shadow = rospy.get_param('~target_mesh_shadow', True)
+        self.target_mesh_shadow_start = float(rospy.get_param('~target_mesh_shadow_start', 0.45))
+        self.target_mesh_shadow_length = float(rospy.get_param('~target_mesh_shadow_length', 2.0))
         self.use_boundary = rospy.get_param('~use_boundary', True)
         self.boundary_ray_step_deg = float(rospy.get_param('~boundary_ray_step_deg', 1.0))
 
@@ -295,7 +297,7 @@ class ForwardSonarSim:
         bearing = math.atan2(lateral, max(forward, 1e-6))
         return abs(bearing) <= half_fov
 
-    def add_echo_blob(self, image, forward, lateral, strength, radius_m):
+    def add_echo_blob(self, image, forward, lateral, strength, radius_m, draw_shadow=True):
         if not self.in_sonar_footprint(forward, lateral):
             return
 
@@ -315,11 +317,16 @@ class ForwardSonarSim:
         blob = strength * np.exp(-0.5 * (((ys - row) / row_sigma) ** 2 + ((xs - col) / col_sigma) ** 2))
         image[r0:r1, c0:c1] += blob
 
-        # A small acoustic shadow behind strong returns improves readability.
-        shadow_near = max(0, row - int(2.0 * row_sigma))
-        shadow_far = max(0, row - int(12.0 * row_sigma))
-        if shadow_far < shadow_near:
-            image[shadow_far:shadow_near, c0:c1] *= 0.55
+        if draw_shadow:
+            self.add_radial_shadow(
+                image,
+                forward,
+                lateral,
+                radius_m * 4.0,
+                radius_m * 9.0,
+                max(0.58, 1.0 - 0.0018 * strength),
+                max(1.0, col_sigma * 0.70),
+            )
 
     def add_target_echo(self, image):
         if not self.have_target:
@@ -419,21 +426,49 @@ class ForwardSonarSim:
         strength = np.clip(strength, 0.0, self.target_strength * 1.35)
 
         for idx, point_strength in zip(visible, strength):
-            self.add_echo_blob(image, vf[idx], vl[idx], point_strength, self.target_mesh_point_radius)
+            self.add_echo_blob(image, vf[idx], vl[idx], point_strength, self.target_mesh_point_radius, draw_shadow=False)
             if self.target_mesh_shadow and point_strength > self.target_strength * 0.12:
-                self.add_mesh_shadow(image, rows[idx], cols[idx], point_strength)
+                self.add_mesh_shadow(image, vf[idx], vl[idx], point_strength)
 
         nearest = visible[np.argmin(vr[visible])]
         return vr[nearest], vbearing[nearest]
 
-    def add_mesh_shadow(self, image, row, col, strength):
-        width = max(2, int(self.target_mesh_point_radius / (2.0 * self.max_lateral_span()) * self.image_width * 4.0))
-        c0 = max(0, col - width)
-        c1 = min(self.image_width, col + width + 1)
-        r0 = max(0, row - 18)
-        r1 = max(0, row - 3)
-        if r0 < r1:
-            image[r0:r1, c0:c1] *= max(0.40, 1.0 - 0.0025 * strength)
+    def add_mesh_shadow(self, image, forward, lateral, strength):
+        self.add_radial_shadow(
+            image,
+            forward,
+            lateral,
+            self.target_mesh_shadow_start,
+            self.target_mesh_shadow_length,
+            max(0.52, 1.0 - 0.0018 * strength),
+            1.8,
+        )
+
+    def add_radial_shadow(self, image, forward, lateral, start_offset, length, attenuation, width_px):
+        range_xy = math.hypot(forward, lateral)
+        if range_xy <= self.min_range:
+            return
+        bearing = math.atan2(lateral, max(forward, 1e-6))
+        far_range = min(self.max_range, range_xy + max(length, 0.0))
+        near_range = min(far_range, range_xy + max(start_offset, 0.0))
+        if far_range <= near_range:
+            return
+
+        samples = max(4, int((far_range - near_range) / max(self.max_range - self.min_range, 1e-6) * self.image_height * 1.5))
+        ranges = np.linspace(near_range, far_range, samples)
+        cos_b = math.cos(bearing)
+        sin_b = math.sin(bearing)
+        rows = np.array([self.forward_to_row(rng * cos_b) for rng in ranges], dtype=np.int32)
+        cols = np.array([self.lateral_to_col(rng * sin_b) for rng in ranges], dtype=np.int32)
+        width = max(1, int(round(width_px)))
+        for row, col in zip(rows, cols):
+            if row < 0 or row >= self.image_height or col < 0 or col >= self.image_width:
+                continue
+            r0 = max(0, row - width)
+            r1 = min(self.image_height, row + width + 1)
+            c0 = max(0, col - width)
+            c1 = min(self.image_width, col + width + 1)
+            image[r0:r1, c0:c1] *= attenuation
 
     @staticmethod
     def ray_segment_intersection(origin, direction, p0, p1):

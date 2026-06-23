@@ -130,7 +130,8 @@ Visualization Manager:
       Marker Topic: /boundary_loader/visualization
       Name: Marker
       Namespaces:
-        boundary: true
+        boundary_plan: true
+        boundary_sim: true
       Queue Size: 100
       Value: true
     - Alpha: 1

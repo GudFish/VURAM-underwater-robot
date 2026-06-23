@@ -20,6 +20,8 @@
     <param name="target_mesh_point_radius" value="0.045"/>
     <param name="target_mesh_normal_power" value="1.7"/>
     <param name="target_mesh_occlusion_cell" value="2"/>
+    <param name="target_mesh_shadow_start" value="0.45"/>
+    <param name="target_mesh_shadow_length" value="2.0"/>
     <param name="output_auto_gain" value="true"/>
     <param name="output_gain_percentile" value="99.4"/>
     <param name="publish_waiting_image" value="true"/>
@@ -31,7 +33,8 @@
     <param name="min_range" value="0.2"/>
     <param name="image_width" value="512"/>
     <param name="image_height" value="256"/>
-    <param name="use_boundary" value="false"/>
+    <param name="use_boundary" value="true"/>
+    <param name="boundary_param" value="/boundary_loader/sim_enu_points"/>
   </node>
 
   <node if="$(arg show_range)" name="forward_sonar_range_viz" pkg="sub_planning" type="forward_sonar_range_viz.py" output="screen">

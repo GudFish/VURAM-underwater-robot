@@ -11,6 +11,16 @@
   <node name="boundary_loader" pkg="sub_planning" type="boundary_loader.py" output="screen">
         <!-- 从外部 YAML 文件加载参数到节点私有命名空间 -->
         <rosparam command="load" file="$(find sub_planning)/config/boundary_points.yaml" />
+        <param name="sim_boundary_margin" value="3.0"/>
+        <param name="sim_boundary_smoothness" value="0.9"/>
+        <param name="sim_boundary_resolution" value="160"/>
+        <param name="sim_boundary_variation" value="30"/>
+        <param name="sim_boundary_min_clearance_ratio" value="0.22"/>
+        <param name="sim_boundary_max_clearance_ratio" value="0.58"/>
+        <param name="plan_marker_width" value="0.18"/>
+        <param name="plan_marker_alpha" value="0.35"/>
+        <param name="sim_marker_width" value="0.42"/>
+        <param name="sim_marker_alpha" value="0.95"/>
   </node>
 
   <!-- 动态目标生成 -->
