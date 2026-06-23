@@ -67,6 +67,28 @@ class BearingOnlyCVEKF2D:
         h = np.array([-dy / r2, dx / r2, 0.0, 0.0], dtype=float)
         return pred, h
 
+    def _linearize_range_bearing(self, observer_xy, observer_yaw):
+        ox, oy = float(observer_xy[0]), float(observer_xy[1])
+        dx = self.x[0] - ox
+        dy = self.x[1] - oy
+        r2 = max(dx * dx + dy * dy, self.min_range * self.min_range)
+        r = math.sqrt(r2)
+        range_pred = r
+        bearing_pred = self.wrap_pi(math.atan2(dy, dx) - float(observer_yaw))
+        h_range = np.array([dx / r, dy / r, 0.0, 0.0], dtype=float)
+        h_bearing = np.array([-dy / r2, dx / r2, 0.0, 0.0], dtype=float)
+        return np.array([range_pred, bearing_pred], dtype=float), np.vstack((h_range, h_bearing))
+
+    def _apply_update(self, h_mat, innovation, r_mat):
+        s = h_mat.dot(self.P).dot(h_mat.T) + r_mat
+        k = self.P.dot(h_mat.T).dot(np.linalg.inv(s))
+
+        self.x = self.x + k.dot(innovation)
+        i_kh = np.eye(4) - k.dot(h_mat)
+        self.P = i_kh.dot(self.P).dot(i_kh.T) + k.dot(r_mat).dot(k.T)
+        self.P = 0.5 * (self.P + self.P.T)
+        return self.x.copy(), self.P.copy(), s
+
     def update(self, observer_xy, observer_yaw, measured_bearing):
         x, p, innovation = self.update_multi([observer_xy], [observer_yaw], [measured_bearing])
         innovation_scalar = 0.0 if innovation.size == 0 else float(innovation[0])
@@ -95,13 +117,23 @@ class BearingOnlyCVEKF2D:
             diag = np.array(bearing_noise_vars, dtype=float).reshape(num)
             r_mat = np.diag(diag)
 
-        s = h_mat.dot(self.P).dot(h_mat.T) + r_mat
-        k = self.P.dot(h_mat.T).dot(np.linalg.inv(s))
+        self._apply_update(h_mat, innovation, r_mat)
+        return self.x.copy(), self.P.copy(), innovation
 
-        self.x = self.x + k.dot(innovation)
-        i_kh = np.eye(4) - k.dot(h_mat)
-        self.P = i_kh.dot(self.P).dot(i_kh.T) + k.dot(r_mat).dot(k.T)
-        self.P = 0.5 * (self.P + self.P.T)
+    def update_range_bearing(self, observer_xy, observer_yaw, measured_range, measured_bearing, range_noise_var, bearing_noise_var):
+        if not self.initialized:
+            return self.x.copy(), self.P.copy(), np.zeros(2, dtype=float)
+
+        pred, h_mat = self._linearize_range_bearing(observer_xy, observer_yaw)
+        innovation = np.array(
+            [
+                float(measured_range) - pred[0],
+                self.wrap_pi(float(measured_bearing) - pred[1]),
+            ],
+            dtype=float,
+        )
+        r_mat = np.diag([float(range_noise_var), float(bearing_noise_var)])
+        self._apply_update(h_mat, innovation, r_mat)
         return self.x.copy(), self.P.copy(), innovation
 
     def measurement_stats(self, observer_xy, observer_yaw, measured_bearing):
@@ -110,4 +142,21 @@ class BearingOnlyCVEKF2D:
         h_col = h.reshape(1, 4)
         s = float(h_col.dot(self.P).dot(h_col.T) + self.R)
         nis = innovation * innovation / max(s, 1e-9)
+        return innovation, s, nis
+
+    def range_bearing_stats(self, observer_xy, observer_yaw, measured_range, measured_bearing, range_noise_var, bearing_noise_var):
+        pred, h_mat = self._linearize_range_bearing(observer_xy, observer_yaw)
+        innovation = np.array(
+            [
+                float(measured_range) - pred[0],
+                self.wrap_pi(float(measured_bearing) - pred[1]),
+            ],
+            dtype=float,
+        )
+        r_mat = np.diag([float(range_noise_var), float(bearing_noise_var)])
+        s = h_mat.dot(self.P).dot(h_mat.T) + r_mat
+        try:
+            nis = float(innovation.T.dot(np.linalg.inv(s)).dot(innovation))
+        except np.linalg.LinAlgError:
+            nis = float('inf')
         return innovation, s, nis

@@ -1,0 +1,149 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="forward_sonar" default="true"/>
+  <arg name="forward_sonar_window" default="false"/>
+  <arg name="forward_sonar_debug_window" default="true"/>
+
+  <include file="$(find sub_planning)/launch/common_vehicle_control.launch">
+    <arg name="pos_ctrl" value="False"/>
+    <arg name="vel_ctrl_rate" value="20.0"/>
+    <arg name="depth_mux" value="True"/>
+    <arg name="input_vel_topic" value="/target_velocity_xy"/>
+    <arg name="output_vel_topic" value="/target_velocity"/>
+  </include>
+
+  <include file="$(find sub_planning)/launch/dynamic_target.launch"/>
+  <include file="$(find sub_planning)/launch/acoustic_tdoa_chain.launch"/>
+  <include file="$(find sub_planning)/launch/target_belief_viz.launch"/>
+  <include if="$(arg forward_sonar)" file="$(find sub_planning)/launch/forward_sonar_sim.launch">
+    <arg name="show_window" value="$(arg forward_sonar_window)"/>
+  </include>
+
+  <node if="$(arg forward_sonar)" name="forward_sonar_target_detector" pkg="sub_planning" type="forward_sonar_target_detector.py" output="screen">
+    <param name="image_topic" value="/forward_sonar/image"/>
+    <param name="bearing_topic" value="/target_acoustic_bearing"/>
+    <param name="measurement_topic" value="/forward_sonar/measurement"/>
+    <param name="debug_topic" value="/forward_sonar/detection_debug"/>
+    <param name="debug_image_topic" value="/forward_sonar/debug_image"/>
+    <param name="fov_deg" value="130.0"/>
+    <param name="max_range" value="30.0"/>
+    <param name="min_range" value="0.2"/>
+    <param name="threshold_percentile" value="99.2"/>
+    <param name="min_threshold" value="40.0"/>
+    <param name="min_blob_area" value="18"/>
+    <param name="track_gate_px" value="45.0"/>
+    <param name="publish_min_score" value="0.15"/>
+    <param name="min_mean_contrast" value="14.0"/>
+    <param name="min_peak_delta" value="10.0"/>
+    <param name="min_excess_score" value="0.10"/>
+    <param name="min_confirm_frames" value="2"/>
+    <param name="max_missed_frames" value="3"/>
+    <param name="bearing_gate_deg" value="8.0"/>
+    <param name="bearing_validation_gate_deg" value="14.0"/>
+    <param name="bearing_timeout" value="1.0"/>
+    <param name="allow_track_without_bearing" value="true"/>
+    <param name="track_gate_scale" value="1.6"/>
+    <param name="track_uncertainty_publish_max" value="0.65"/>
+    <param name="track_uncertainty_reset_max" value="0.9"/>
+    <param name="track_uncertainty_alpha" value="0.65"/>
+    <param name="missed_uncertainty_growth" value="0.25"/>
+  </node>
+
+  <node if="$(arg forward_sonar_debug_window)" name="forward_sonar_detection_viewer" pkg="sub_planning" type="forward_sonar_image_viewer.py" output="screen">
+    <param name="image_topic" value="/forward_sonar/debug_image"/>
+    <param name="window_name" value="Forward Sonar Detection Debug"/>
+    <param name="colormap" value="true"/>
+    <param name="display_scale" value="1.4"/>
+  </node>
+
+  <node name="target_bearing_estimator_ekf" pkg="sub_planning" type="target_bearing_estimator_ekf.py" output="screen">
+    <param name="robot_odom_topic" value="/mavros/local_position/odom"/>
+    <param name="state_topic" value="/mavros/state"/>
+    <param name="bearing_topic" value="/target_acoustic_bearing"/>
+    <param name="sonar_measurement_topic" value="/forward_sonar/measurement"/>
+    <param name="target_pose_topic" value="/target_estimate/pose"/>
+    <param name="target_twist_topic" value="/target_estimate/twist"/>
+    <param name="belief_topic" value="/target_estimate/belief"/>
+    <param name="filter_rate" value="10.0"/>
+    <param name="bearing_noise_std" value="0.08"/>
+    <param name="sonar_range_noise_std" value="0.75"/>
+    <param name="sonar_bearing_noise_std" value="0.08"/>
+    <param name="sonar_min_score" value="0.15"/>
+    <param name="sonar_max_uncertainty" value="0.75"/>
+    <param name="sonar_uncertainty_noise_scale" value="6.0"/>
+    <param name="sonar_measurement_timeout" value="0.5"/>
+    <param name="acoustic_measurement_timeout" value="0.5"/>
+    <param name="prefer_sonar_init" value="true"/>
+    <param name="allow_bearing_only_init" value="False"/>
+    <param name="min_bearing_range" value="0.25"/>
+    <rosparam param="process_noise_diag">[0.4, 0.4, 0.8, 0.8]</rosparam>
+    <rosparam param="init_mean">[8.0, 0.0, 0.3, 0.0]</rosparam>
+    <rosparam param="init_cov_diag">[36.0, 9.0, 2.0, 2.0]</rosparam>
+    <param name="init_range" value="8.0"/>
+    <param name="init_range_var" value="36.0"/>
+    <param name="init_cross_range_var" value="4.0"/>
+    <param name="use_prior_init" value="False"/>
+    <param name="reset_on_disarm" value="True"/>
+  </node>
+
+  <node name="mpc_belief_target_tracker" pkg="sub_planning" type="mpc_belief_target_tracker.py" output="screen">
+    <rosparam command="load" file="$(find sub_planning)/config/fossen3_dynamics.yaml" ns="dynamics"/>
+    <param name="odom_topic" value="/mavros/local_position/odom"/>
+    <param name="belief_topic" value="/target_estimate/belief"/>
+    <param name="vel_topic" value="/target_velocity_xy"/>
+    <param name="yaw_topic" value="/target_yaw"/>
+    <param name="control_rate" value="5.0"/>
+    <param name="mpc_dt" value="0.2"/>
+    <param name="horizon_steps" value="12"/>
+    <param name="desired_standoff" value="3.0"/>
+    <param name="exploration_standoff" value="4.5"/>
+    <param name="goal_tolerance" value="0.8"/>
+    <param name="unc_low" value="1.0"/>
+    <param name="unc_high" value="8.0"/>
+    <param name="unc_pos_gain" value="1.0"/>
+    <param name="unc_vel_gain" value="0.4"/>
+    <param name="sigma_min" value="0.1"/>
+    <param name="w_sigma" value="1.2"/>
+    <param name="w_bearing_trace" value="1.2"/>
+    <param name="w_bearing_logdet" value="0.0"/>
+    <param name="bearing_noise_std" value="0.08"/>
+    <param name="bearing_process_pos" value="0.05"/>
+    <param name="bearing_process_vel" value="0.10"/>
+    <param name="min_bearing_range" value="0.5"/>
+    <param name="u_max" value="0.8"/>
+    <param name="v_max" value="0.6"/>
+    <param name="r_max" value="0.6"/>
+    <param name="du_step_max" value="0.25"/>
+    <param name="dv_step_max" value="0.20"/>
+    <param name="dyaw_step_max" value="0.30"/>
+    <param name="psi_kp" value="1.6"/>
+    <param name="k_tau_u" value="120.0"/>
+    <param name="k_tau_v" value="120.0"/>
+    <param name="k_tau_r" value="80.0"/>
+    <param name="tau_u_max" value="200.0"/>
+    <param name="tau_v_max" value="200.0"/>
+    <param name="tau_r_max" value="120.0"/>
+    <param name="w_track" value="2.0"/>
+    <param name="w_terminal_track" value="10.0"/>
+    <param name="w_yaw" value="0.8"/>
+    <param name="w_ctrl" value="0.2"/>
+    <param name="w_sway" value="0.3"/>
+    <param name="w_du" value="0.6"/>
+    <param name="w_dyaw" value="0.4"/>
+    <param name="w_cte" value="2.5"/>
+    <param name="sonar_fov_deg" value="130.0"/>
+    <param name="sonar_min_range" value="0.2"/>
+    <param name="sonar_max_range" value="30.0"/>
+    <param name="w_sonar_fov" value="8.0"/>
+    <param name="w_sonar_range" value="2.0"/>
+    <param name="w_sonar_center" value="1.5"/>
+    <param name="w_sonar_front" value="4.0"/>
+    <param name="boundary_param" value="/boundary_loader/enu_points"/>
+    <param name="boundary_margin" value="1.0"/>
+    <param name="boundary_wait_timeout" value="8.0"/>
+    <param name="boundary_required" value="true"/>
+    <param name="search_enable" value="true"/>
+    <param name="search_forward_speed" value="0.15"/>
+    <param name="search_yaw_rate" value="0.25"/>
+  </node>
+</launch>

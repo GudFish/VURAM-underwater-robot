@@ -7,7 +7,7 @@ import rospy
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from mavros_msgs.msg import State
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Float32MultiArray
 
 from sub_planning.models.bearing_only_ekf import BearingOnlyCVEKF2D
 
@@ -19,12 +19,22 @@ class TargetBearingEstimatorEKF:
         self.robot_odom_topic = rospy.get_param('~robot_odom_topic', '/mavros/local_position/odom')
         self.state_topic = rospy.get_param('~state_topic', '/mavros/state')
         self.bearing_topic = rospy.get_param('~bearing_topic', '/target_acoustic_bearing')
+        self.sonar_measurement_topic = rospy.get_param('~sonar_measurement_topic', '/forward_sonar/measurement')
         self.target_pose_topic = rospy.get_param('~target_pose_topic', '/target_estimate/pose')
         self.target_twist_topic = rospy.get_param('~target_twist_topic', '/target_estimate/twist')
         self.belief_topic = rospy.get_param('~belief_topic', '/target_estimate/belief')
 
         self.filter_rate = float(rospy.get_param('~filter_rate', 10.0))
         self.bearing_noise_std = float(rospy.get_param('~bearing_noise_std', 0.08))
+        self.sonar_range_noise_std = float(rospy.get_param('~sonar_range_noise_std', 0.75))
+        self.sonar_bearing_noise_std = float(rospy.get_param('~sonar_bearing_noise_std', 0.08))
+        self.sonar_min_score = float(rospy.get_param('~sonar_min_score', 0.15))
+        self.sonar_max_uncertainty = float(rospy.get_param('~sonar_max_uncertainty', 0.75))
+        self.sonar_uncertainty_noise_scale = float(rospy.get_param('~sonar_uncertainty_noise_scale', 6.0))
+        self.sonar_measurement_timeout = float(rospy.get_param('~sonar_measurement_timeout', 0.5))
+        self.acoustic_measurement_timeout = float(rospy.get_param('~acoustic_measurement_timeout', 0.5))
+        self.prefer_sonar_init = rospy.get_param('~prefer_sonar_init', True)
+        self.allow_bearing_only_init = rospy.get_param('~allow_bearing_only_init', True)
         self.min_bearing_range = float(rospy.get_param('~min_bearing_range', 0.25))
         self.process_noise_diag = [float(v) for v in rospy.get_param('~process_noise_diag', [0.4, 0.4, 0.8, 0.8])]
         self.init_mean = [float(v) for v in rospy.get_param('~init_mean', [8.0, 0.0, 0.3, 0.0])]
@@ -43,6 +53,7 @@ class TargetBearingEstimatorEKF:
         self.robot_yaw = 0.0
         self.last_stamp = None
         self.pending_bearing = None
+        self.pending_sonar = None
 
         self.init_covariance = np.diag(np.array(self.init_cov_diag, dtype=float))
         self.init_mean_np = np.array(self.init_mean, dtype=float).reshape(4)
@@ -51,6 +62,7 @@ class TargetBearingEstimatorEKF:
         self.state_sub = rospy.Subscriber(self.state_topic, State, self.state_cb, queue_size=1)
         self.odom_sub = rospy.Subscriber(self.robot_odom_topic, Odometry, self.odom_cb, queue_size=1)
         self.bearing_sub = rospy.Subscriber(self.bearing_topic, Float32, self.bearing_cb, queue_size=10)
+        self.sonar_sub = rospy.Subscriber(self.sonar_measurement_topic, Float32MultiArray, self.sonar_cb, queue_size=10)
         self.pose_pub = rospy.Publisher(self.target_pose_topic, PoseStamped, queue_size=10)
         self.twist_pub = rospy.Publisher(self.target_twist_topic, TwistStamped, queue_size=10)
         self.belief_pub = rospy.Publisher(self.belief_topic, Odometry, queue_size=10)
@@ -76,6 +88,7 @@ class TargetBearingEstimatorEKF:
     def reset_estimator(self, reason):
         self.last_stamp = None
         self.pending_bearing = None
+        self.pending_sonar = None
         self.ekf = self.create_filter()
         rospy.loginfo('[TargetBearingEKF] estimator reset: %s', reason)
 
@@ -145,13 +158,54 @@ class TargetBearingEstimatorEKF:
             state[3],
         )
 
+    def initialize_from_sonar(self, measured_range, measured_bearing):
+        world_bearing = self.wrap_pi(self.robot_yaw + float(measured_bearing))
+        ux = math.cos(world_bearing)
+        uy = math.sin(world_bearing)
+        range_value = max(float(measured_range), self.min_bearing_range)
+        state = np.array(
+            [
+                self.robot_x + range_value * ux,
+                self.robot_y + range_value * uy,
+                self.init_mean_np[2],
+                self.init_mean_np[3],
+            ],
+            dtype=float,
+        )
+
+        along = np.array([ux, uy], dtype=float)
+        cross = np.array([-uy, ux], dtype=float)
+        range_var = max(self.sonar_range_noise_std ** 2, 0.25)
+        cross_var = max((range_value * self.sonar_bearing_noise_std) ** 2, 0.25)
+        pos_cov = range_var * np.outer(along, along) + cross_var * np.outer(cross, cross)
+        cov = np.array(self.init_covariance, dtype=float)
+        cov[0:2, 0:2] = pos_cov
+        self.ekf.set_state(state, cov)
+        rospy.loginfo(
+            '[TargetBearingEKF] sonar initialized: range=%.2f bearing=%.2f state=(%.2f, %.2f, %.2f, %.2f)',
+            range_value,
+            measured_bearing,
+            state[0],
+            state[1],
+            state[2],
+            state[3],
+        )
+
     def bearing_cb(self, msg):
         if not self.current_state.armed or not self.have_robot:
             return
 
         bearing = self.wrap_pi(float(msg.data))
         if not self.ekf_initialized():
-            self.initialize_from_bearing(bearing)
+            if self.prefer_sonar_init and self.pending_sonar is not None and self.measurement_is_fresh(
+                self.pending_sonar['stamp'],
+                self.sonar_measurement_timeout,
+            ):
+                sonar = self.pending_sonar
+                self.initialize_from_sonar(sonar['range'], sonar['bearing'])
+                self.pending_sonar = None
+            elif self.allow_bearing_only_init:
+                self.initialize_from_bearing(bearing)
 
         self.pending_bearing = {
             'stamp': rospy.Time.now(),
@@ -159,6 +213,40 @@ class TargetBearingEstimatorEKF:
             'robot_xy': (self.robot_x, self.robot_y),
             'robot_yaw': self.robot_yaw,
         }
+
+    def sonar_cb(self, msg):
+        if not self.current_state.armed or not self.have_robot:
+            return
+        if len(msg.data) < 3:
+            rospy.logwarn_throttle(2.0, '[TargetBearingEKF] sonar measurement requires [range, bearing, score].')
+            return
+
+        measured_range = float(msg.data[0])
+        measured_bearing = self.wrap_pi(float(msg.data[1]))
+        score = float(msg.data[2])
+        uncertainty = float(msg.data[3]) if len(msg.data) >= 4 else 0.0
+        uncertainty = max(0.0, min(1.0, uncertainty))
+        stamp = rospy.Time.now()
+
+        self.pending_sonar = {
+            'stamp': stamp,
+            'range': measured_range,
+            'bearing': measured_bearing,
+            'score': score,
+            'uncertainty': uncertainty,
+            'robot_xy': (self.robot_x, self.robot_y),
+            'robot_yaw': self.robot_yaw,
+        }
+
+        if not self.ekf_initialized() and score >= self.sonar_min_score and uncertainty <= self.sonar_max_uncertainty:
+            self.initialize_from_sonar(measured_range, measured_bearing)
+            self.pending_sonar = None
+
+    def measurement_is_fresh(self, stamp, timeout):
+        if stamp is None:
+            return False
+        age = (rospy.Time.now() - stamp).to_sec()
+        return age <= max(timeout, 0.0)
 
     def timer_cb(self, event):
         if not self.have_robot:
@@ -168,7 +256,7 @@ class TargetBearingEstimatorEKF:
             rospy.logwarn_throttle(2.0, '[TargetBearingEKF] waiting for vehicle arm...')
             return
         if not self.ekf_initialized():
-            rospy.logwarn_throttle(2.0, '[TargetBearingEKF] waiting for first bearing measurement...')
+            rospy.logwarn_throttle(2.0, '[TargetBearingEKF] waiting for first acoustic or sonar measurement...')
             return
 
         now = event.current_real if event.current_real != rospy.Time() else rospy.Time.now()
@@ -179,17 +267,60 @@ class TargetBearingEstimatorEKF:
         self.last_stamp = now
 
         self.ekf.predict(dt)
-        innovation = 0.0
-        nis = 0.0
+        acoustic_innovation = 0.0
+        acoustic_nis = 0.0
+        sonar_range_innovation = 0.0
+        sonar_bearing_innovation = 0.0
+        sonar_nis = 0.0
+
+        if self.pending_sonar is not None:
+            if not self.measurement_is_fresh(self.pending_sonar['stamp'], self.sonar_measurement_timeout):
+                self.pending_sonar = None
+            elif (
+                self.pending_sonar['score'] >= self.sonar_min_score
+                and self.pending_sonar.get('uncertainty', 0.0) <= self.sonar_max_uncertainty
+            ):
+                obs = self.pending_sonar
+                noise_scale = 1.0 + self.sonar_uncertainty_noise_scale * obs.get('uncertainty', 0.0) ** 2
+                _, _, innovation = self.ekf.update_range_bearing(
+                    obs['robot_xy'],
+                    obs['robot_yaw'],
+                    obs['range'],
+                    obs['bearing'],
+                    self.sonar_range_noise_std ** 2 * noise_scale,
+                    self.sonar_bearing_noise_std ** 2 * noise_scale,
+                )
+                _, _, sonar_nis = self.ekf.range_bearing_stats(
+                    obs['robot_xy'],
+                    obs['robot_yaw'],
+                    obs['range'],
+                    obs['bearing'],
+                    self.sonar_range_noise_std ** 2 * noise_scale,
+                    self.sonar_bearing_noise_std ** 2 * noise_scale,
+                )
+                sonar_range_innovation = float(innovation[0])
+                sonar_bearing_innovation = float(innovation[1])
+                self.pending_sonar = None
+
         if self.pending_bearing is not None:
-            obs = self.pending_bearing
-            _, _, innovation = self.ekf.update(obs['robot_xy'], obs['robot_yaw'], obs['bearing'])
-            _, _, nis = self.ekf.measurement_stats(obs['robot_xy'], obs['robot_yaw'], obs['bearing'])
-            self.pending_bearing = None
+            if not self.measurement_is_fresh(self.pending_bearing['stamp'], self.acoustic_measurement_timeout):
+                self.pending_bearing = None
+            else:
+                obs = self.pending_bearing
+                _, _, acoustic_innovation = self.ekf.update(obs['robot_xy'], obs['robot_yaw'], obs['bearing'])
+                _, _, acoustic_nis = self.ekf.measurement_stats(obs['robot_xy'], obs['robot_yaw'], obs['bearing'])
+                self.pending_bearing = None
 
-        self.publish_estimate(now, innovation, nis)
+        self.publish_estimate(
+            now,
+            acoustic_innovation,
+            acoustic_nis,
+            sonar_range_innovation,
+            sonar_bearing_innovation,
+            sonar_nis,
+        )
 
-    def publish_estimate(self, stamp, innovation, nis):
+    def publish_estimate(self, stamp, acoustic_innovation, acoustic_nis, sonar_range_innovation, sonar_bearing_innovation, sonar_nis):
         state = self.ekf.x.copy()
         belief_cov = self.ekf.P.copy()
         vx = state[2]
@@ -231,14 +362,17 @@ class TargetBearingEstimatorEKF:
         pos_trace = belief_cov[0, 0] + belief_cov[1, 1]
         rospy.loginfo_throttle(
             2.0,
-            '[TargetBearingEKF] est=(%.2f, %.2f), vel=(%.2f, %.2f), trP=%.3f, bearing_innov=%.3f, nis=%.2f',
+            '[TargetBearingEKF] est=(%.2f, %.2f), vel=(%.2f, %.2f), trP=%.3f, acoustic_innov=%.3f, acoustic_nis=%.2f, sonar_dr=%.3f, sonar_db=%.3f, sonar_nis=%.2f',
             state[0],
             state[1],
             vx,
             vy,
             pos_trace,
-            innovation,
-            nis,
+            acoustic_innovation,
+            acoustic_nis,
+            sonar_range_innovation,
+            sonar_bearing_innovation,
+            sonar_nis,
         )
 
 

@@ -172,6 +172,7 @@ catkin_install_python(PROGRAMS
   scripts/sensors/acoustic_tdoa_sensor_sim.py
   scripts/sensors/tdoa_bearing_estimator.py
   scripts/sensors/forward_sonar_sim.py
+  scripts/sensors/forward_sonar_target_detector.py
   scripts/visualization/target_belief_viz.py
   scripts/estimators/target_bearing_estimator_ekf.py
   scripts/estimators/target_bearing_window_ls.py

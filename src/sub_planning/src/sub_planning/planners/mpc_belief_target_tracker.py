@@ -81,6 +81,9 @@ class BeliefAwareMPCTracker:
         self.unc_low = float(rospy.get_param('~unc_low', 1.0))
         self.unc_high = float(rospy.get_param('~unc_high', 8.0))
         self.sigma_min = float(rospy.get_param('~sigma_min', 0.1))
+        self.search_enable = bool(rospy.get_param('~search_enable', True))
+        self.search_forward_speed = float(rospy.get_param('~search_forward_speed', 0.15))
+        self.search_yaw_rate = float(rospy.get_param('~search_yaw_rate', 0.25))
 
         dyn = rospy.get_param('~dynamics', {})
         self.m11 = float(dyn.get('m11', 40.0))
@@ -524,6 +527,14 @@ class BeliefAwareMPCTracker:
         self.vel_pub.publish(vel_msg)
         self.yaw_pub.publish(yaw_msg)
 
+    def publish_search_cmd(self):
+        yaw_cmd = wrap_pi(self.last_cmd_yaw + self.search_yaw_rate / max(self.control_rate, 1e-3))
+        vx_cmd = self._clip(self.search_forward_speed, -self.u_max, self.u_max)
+        self.last_cmd_u = vx_cmd
+        self.last_cmd_v = 0.0
+        self.last_cmd_yaw = yaw_cmd
+        self.publish_cmd(vx_cmd, 0.0, yaw_cmd)
+
     def run(self):
         rate = rospy.Rate(self.control_rate)
         while not rospy.is_shutdown():
@@ -532,7 +543,9 @@ class BeliefAwareMPCTracker:
                 rate.sleep()
                 continue
             if not self.have_belief:
-                rospy.logwarn_throttle(2.0, '[BeliefAwareMPC] waiting for target belief...')
+                rospy.logwarn_throttle(2.0, '[BeliefAwareMPC] waiting for target belief; running search behavior...')
+                if self.search_enable:
+                    self.publish_search_cmd()
                 rate.sleep()
                 continue
             if not self._refresh_boundary_constraints():
