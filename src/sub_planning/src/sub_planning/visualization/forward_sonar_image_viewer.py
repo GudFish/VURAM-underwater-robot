@@ -29,13 +29,20 @@ class ForwardSonarImageViewer:
         rospy.loginfo('[ForwardSonarViewer] showing %s in window "%s"', self.image_topic, self.window_name)
 
     def image_cb(self, msg):
-        if msg.encoding not in ('mono8', '8UC1'):
+        if msg.encoding in ('mono8', '8UC1'):
+            image = np.frombuffer(msg.data, dtype=np.uint8).reshape((msg.height, msg.width))
+            display = image
+            if self.colormap:
+                display = cv2.applyColorMap(display, cv2.COLORMAP_OCEAN)
+        elif msg.encoding == 'bgr8':
+            display = np.frombuffer(msg.data, dtype=np.uint8).reshape((msg.height, msg.width, 3))
+        elif msg.encoding == 'rgb8':
+            image = np.frombuffer(msg.data, dtype=np.uint8).reshape((msg.height, msg.width, 3))
+            display = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        else:
             rospy.logwarn_throttle(2.0, '[ForwardSonarViewer] unsupported encoding: %s', msg.encoding)
             return
-        image = np.frombuffer(msg.data, dtype=np.uint8).reshape((msg.height, msg.width))
-        display = image
-        if self.colormap:
-            display = cv2.applyColorMap(display, cv2.COLORMAP_OCEAN)
+
         if abs(self.display_scale - 1.0) > 1e-3:
             display = cv2.resize(display, None, fx=self.display_scale, fy=self.display_scale, interpolation=cv2.INTER_NEAREST)
         cv2.imshow(self.window_name, display)

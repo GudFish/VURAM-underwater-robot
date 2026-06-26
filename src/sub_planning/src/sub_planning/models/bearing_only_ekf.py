@@ -136,6 +136,135 @@ class BearingOnlyCVEKF2D:
         self._apply_update(h_mat, innovation, r_mat)
         return self.x.copy(), self.P.copy(), innovation
 
+    def update_range_bearing_pdaf(
+        self,
+        observer_xy,
+        observer_yaw,
+        candidates,
+        range_noise_var,
+        bearing_noise_var,
+        detection_probability=0.85,
+        missed_weight=0.20,
+        gate_chi2=9.21,
+        min_beta_sum=0.05,
+        range_weight_min=0.35,
+        range_weight_power=1.0,
+    ):
+        if not self.initialized:
+            return self.x.copy(), self.P.copy(), {
+                'updated': False,
+                'num_candidates': len(candidates),
+                'num_gated': 0,
+                'beta0': 1.0,
+                'best_beta': 0.0,
+                'weighted_range': 0.0,
+                'weighted_bearing': 0.0,
+                'best_nis': 0.0,
+                'innovation': np.zeros(2, dtype=float),
+            }
+
+        pred, h_mat = self._linearize_range_bearing(observer_xy, observer_yaw)
+        r_mat = np.diag([float(range_noise_var), float(bearing_noise_var)])
+        s = h_mat.dot(self.P).dot(h_mat.T) + r_mat
+        try:
+            s_inv = np.linalg.inv(s)
+        except np.linalg.LinAlgError:
+            s_inv = np.linalg.pinv(s)
+
+        det_s = max(float(np.linalg.det(s)), 1.0e-12)
+        norm = math.sqrt(max(((2.0 * math.pi) ** 2) * det_s, 1.0e-12))
+        gated = []
+        for candidate in candidates:
+            innovation = np.array(
+                [
+                    float(candidate['range']) - pred[0],
+                    self.wrap_pi(float(candidate['bearing']) - pred[1]),
+                ],
+                dtype=float,
+            )
+            nis = float(innovation.T.dot(s_inv).dot(innovation))
+            if not math.isfinite(nis) or nis > float(gate_chi2):
+                continue
+
+            score = max(0.0, min(1.0, float(candidate.get('score', 1.0))))
+            measured_range = max(float(candidate['range']), self.min_range)
+            range_weight = max(float(range_weight_min), min(1.0, pred[0] / measured_range)) ** max(float(range_weight_power), 0.0)
+            likelihood = math.exp(-0.5 * nis) / norm
+            weight = max(0.0, float(detection_probability)) * max(score, 1.0e-3) * range_weight * likelihood
+            gated.append(
+                {
+                    'candidate': candidate,
+                    'innovation': innovation,
+                    'nis': nis,
+                    'weight': weight,
+                    'range_weight': range_weight,
+                }
+            )
+
+        weight_sum = sum(item['weight'] for item in gated)
+        denominator = max(float(missed_weight), 0.0) + weight_sum
+        if not gated or denominator <= 1.0e-12:
+            return self.x.copy(), self.P.copy(), {
+                'updated': False,
+                'num_candidates': len(candidates),
+                'num_gated': len(gated),
+                'beta0': 1.0,
+                'best_beta': 0.0,
+                'weighted_range': float(pred[0]),
+                'weighted_bearing': float(pred[1]),
+                'best_nis': 0.0,
+                'innovation': np.zeros(2, dtype=float),
+            }
+
+        beta0 = max(float(missed_weight), 0.0) / denominator
+        betas = np.array([item['weight'] / denominator for item in gated], dtype=float)
+        beta_sum = float(np.sum(betas))
+        if beta_sum < max(float(min_beta_sum), 0.0):
+            return self.x.copy(), self.P.copy(), {
+                'updated': False,
+                'num_candidates': len(candidates),
+                'num_gated': len(gated),
+                'beta0': float(beta0),
+                'best_beta': float(np.max(betas)),
+                'weighted_range': float(pred[0]),
+                'weighted_bearing': float(pred[1]),
+                'best_nis': float(min(item['nis'] for item in gated)),
+                'innovation': np.zeros(2, dtype=float),
+            }
+
+        innovations = np.vstack([item['innovation'] for item in gated])
+        innovation_bar = betas.dot(innovations)
+        k_gain = self.P.dot(h_mat.T).dot(s_inv)
+        state_pred = self.x.copy()
+        p_pred = self.P.copy()
+
+        self.x = state_pred + k_gain.dot(innovation_bar)
+
+        p_corrected = p_pred - k_gain.dot(s).dot(k_gain.T)
+        spread = np.zeros((2, 2), dtype=float)
+        for beta, innovation in zip(betas, innovations):
+            delta = innovation - innovation_bar
+            spread += beta * np.outer(delta, delta)
+        spread += beta0 * np.outer(innovation_bar, innovation_bar)
+        self.P = beta0 * p_pred + (1.0 - beta0) * p_corrected + k_gain.dot(spread).dot(k_gain.T)
+        self.P = 0.5 * (self.P + self.P.T)
+
+        weighted_range = pred[0] + innovation_bar[0]
+        weighted_bearing = self.wrap_pi(pred[1] + innovation_bar[1])
+        best_idx = int(np.argmax(betas))
+        return self.x.copy(), self.P.copy(), {
+            'updated': True,
+            'num_candidates': len(candidates),
+            'num_gated': len(gated),
+            'beta0': float(beta0),
+            'best_beta': float(betas[best_idx]),
+            'weighted_range': float(weighted_range),
+            'weighted_bearing': float(weighted_bearing),
+            'best_nis': float(gated[best_idx]['nis']),
+            'innovation': innovation_bar,
+            'betas': betas,
+        }
+
     def measurement_stats(self, observer_xy, observer_yaw, measured_bearing):
         pred, h = self._linearize_bearing(observer_xy, observer_yaw)
         innovation = self.wrap_pi(float(measured_bearing) - pred)

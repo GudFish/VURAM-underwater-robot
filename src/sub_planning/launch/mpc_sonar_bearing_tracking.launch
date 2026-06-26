@@ -23,6 +23,7 @@
     <param name="image_topic" value="/forward_sonar/image"/>
     <param name="bearing_topic" value="/target_acoustic_bearing"/>
     <param name="measurement_topic" value="/forward_sonar/measurement"/>
+    <param name="candidate_topic" value="/forward_sonar/candidates"/>
     <param name="debug_topic" value="/forward_sonar/detection_debug"/>
     <param name="debug_image_topic" value="/forward_sonar/debug_image"/>
     <param name="fov_deg" value="130.0"/>
@@ -31,22 +32,32 @@
     <param name="threshold_percentile" value="99.2"/>
     <param name="min_threshold" value="40.0"/>
     <param name="min_blob_area" value="18"/>
-    <param name="track_gate_px" value="45.0"/>
     <param name="publish_min_score" value="0.15"/>
+    <param name="candidate_min_score" value="0.08"/>
+    <param name="max_candidates" value="12"/>
+    <param name="bearing_candidate_gate_deg" value="12.0"/>
+    <param name="publish_candidates_without_bearing" value="true"/>
+    <param name="publish_legacy_measurement" value="false"/>
     <param name="min_mean_contrast" value="14.0"/>
     <param name="min_peak_delta" value="10.0"/>
     <param name="min_excess_score" value="0.10"/>
-    <param name="min_confirm_frames" value="2"/>
-    <param name="max_missed_frames" value="3"/>
-    <param name="bearing_gate_deg" value="8.0"/>
-    <param name="bearing_validation_gate_deg" value="14.0"/>
     <param name="bearing_timeout" value="1.0"/>
-    <param name="allow_track_without_bearing" value="true"/>
-    <param name="track_gate_scale" value="1.6"/>
-    <param name="track_uncertainty_publish_max" value="0.65"/>
-    <param name="track_uncertainty_reset_max" value="0.9"/>
-    <param name="track_uncertainty_alpha" value="0.65"/>
-    <param name="missed_uncertainty_growth" value="0.25"/>
+    <param name="use_local_threshold" value="true"/>
+    <param name="local_threshold_window_px" value="31"/>
+    <param name="local_threshold_std_scale" value="1.4"/>
+    <param name="local_threshold_min_delta" value="6.0"/>
+    <param name="local_threshold_global_floor_ratio" value="0.30"/>
+    <param name="suppress_boundary_like_blobs" value="true"/>
+    <param name="boundary_min_area" value="120"/>
+    <param name="boundary_min_long_axis_px" value="45.0"/>
+    <param name="boundary_min_physical_length_m" value="4"/>
+    <param name="boundary_min_aspect_ratio" value="4.0"/>
+    <param name="boundary_min_perimeter_area_ratio" value="1.2"/>
+    <param name="boundary_mask_dilate_px" value="2"/>
+    <param name="suppress_near_noise_blobs" value="true"/>
+    <param name="near_noise_range_m" value="2.5"/>
+    <param name="near_noise_min_area" value="32"/>
+    <param name="near_noise_min_physical_length_m" value="0.45"/>
   </node>
 
   <node if="$(arg forward_sonar_debug_window)" name="forward_sonar_detection_viewer" pkg="sub_planning" type="forward_sonar_image_viewer.py" output="screen">
@@ -61,9 +72,11 @@
     <param name="state_topic" value="/mavros/state"/>
     <param name="bearing_topic" value="/target_acoustic_bearing"/>
     <param name="sonar_measurement_topic" value="/forward_sonar/measurement"/>
+    <param name="sonar_candidates_topic" value="/forward_sonar/candidates"/>
     <param name="target_pose_topic" value="/target_estimate/pose"/>
     <param name="target_twist_topic" value="/target_estimate/twist"/>
     <param name="belief_topic" value="/target_estimate/belief"/>
+    <param name="pdaf_debug_topic" value="/target_estimate/pdaf_debug"/>
     <param name="filter_rate" value="10.0"/>
     <param name="bearing_noise_std" value="0.08"/>
     <param name="sonar_range_noise_std" value="0.75"/>
@@ -72,7 +85,16 @@
     <param name="sonar_max_uncertainty" value="0.75"/>
     <param name="sonar_uncertainty_noise_scale" value="6.0"/>
     <param name="sonar_measurement_timeout" value="0.5"/>
+    <param name="sonar_candidate_timeout" value="0.5"/>
     <param name="acoustic_measurement_timeout" value="0.5"/>
+    <param name="pda_detection_probability" value="0.85"/>
+    <param name="pda_missed_weight" value="0.20"/>
+    <param name="pda_gate_chi2" value="9.21"/>
+    <param name="pda_min_beta_sum" value="0.05"/>
+    <param name="pda_max_candidates" value="12"/>
+    <param name="pda_range_weight_min" value="0.35"/>
+    <param name="pda_range_weight_power" value="1.0"/>
+    <param name="bearing_candidate_gate_deg" value="12.0"/>
     <param name="prefer_sonar_init" value="true"/>
     <param name="allow_bearing_only_init" value="False"/>
     <param name="min_bearing_range" value="0.25"/>
