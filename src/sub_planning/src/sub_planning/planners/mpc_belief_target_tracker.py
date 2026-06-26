@@ -21,6 +21,7 @@ class BeliefAwareMPCTracker:
 
         self.odom_topic = rospy.get_param('~odom_topic', '/mavros/local_position/odom')
         self.belief_topic = rospy.get_param('~belief_topic', '/target_estimate/belief')
+        self.bearing_topic = rospy.get_param('~bearing_topic', '/target_acoustic_bearing')
         self.vel_topic = rospy.get_param('~vel_topic', '/target_velocity_xy')
         self.yaw_topic = rospy.get_param('~yaw_topic', '/target_yaw')
 
@@ -84,6 +85,10 @@ class BeliefAwareMPCTracker:
         self.search_enable = bool(rospy.get_param('~search_enable', True))
         self.search_forward_speed = float(rospy.get_param('~search_forward_speed', 0.15))
         self.search_yaw_rate = float(rospy.get_param('~search_yaw_rate', 0.25))
+        self.bearing_search_enable = bool(rospy.get_param('~bearing_search_enable', True))
+        self.bearing_search_timeout = float(rospy.get_param('~bearing_search_timeout', 1.0))
+        self.bearing_search_forward_min_scale = float(rospy.get_param('~bearing_search_forward_min_scale', 0.25))
+        self.bearing_search_lateral_gain = float(rospy.get_param('~bearing_search_lateral_gain', 0.35))
 
         dyn = rospy.get_param('~dynamics', {})
         self.m11 = float(dyn.get('m11', 40.0))
@@ -103,6 +108,8 @@ class BeliefAwareMPCTracker:
 
         self.have_odom = False
         self.have_belief = False
+        self.latest_bearing = None
+        self.latest_bearing_stamp = None
 
         self.x = 0.0
         self.y = 0.0
@@ -142,6 +149,7 @@ class BeliefAwareMPCTracker:
 
         self.odom_sub = rospy.Subscriber(self.odom_topic, Odometry, self.odom_cb, queue_size=1)
         self.belief_sub = rospy.Subscriber(self.belief_topic, Odometry, self.belief_cb, queue_size=1)
+        self.bearing_sub = rospy.Subscriber(self.bearing_topic, Float32, self.bearing_cb, queue_size=10)
         self.vel_pub = rospy.Publisher(self.vel_topic, Twist, queue_size=10)
         self.yaw_pub = rospy.Publisher(self.yaw_topic, Float32, queue_size=10)
 
@@ -446,6 +454,18 @@ class BeliefAwareMPCTracker:
         self.target_cov_vyvy = msg.twist.covariance[7]
         self.have_belief = True
 
+    def bearing_cb(self, msg):
+        self.latest_bearing = wrap_pi(float(msg.data))
+        self.latest_bearing_stamp = rospy.Time.now()
+
+    def fresh_bearing(self):
+        if self.latest_bearing is None or self.latest_bearing_stamp is None:
+            return None
+        age = (rospy.Time.now() - self.latest_bearing_stamp).to_sec()
+        if age > max(self.bearing_search_timeout, 0.0):
+            return None
+        return self.latest_bearing
+
     def _shift_warm_start(self):
         if self.N <= 1:
             return
@@ -535,6 +555,24 @@ class BeliefAwareMPCTracker:
         self.last_cmd_yaw = yaw_cmd
         self.publish_cmd(vx_cmd, 0.0, yaw_cmd)
 
+    def publish_bearing_search_cmd(self, bearing):
+        world_bearing = wrap_pi(self.psi + bearing)
+        forward_scale = max(
+            self.bearing_search_forward_min_scale,
+            max(0.0, math.cos(bearing)),
+        )
+        vx_cmd = self._clip(self.search_forward_speed * forward_scale, -self.u_max, self.u_max)
+        vy_cmd = self._clip(
+            self.bearing_search_lateral_gain * self.search_forward_speed * math.sin(bearing),
+            -self.v_max,
+            self.v_max,
+        )
+
+        self.last_cmd_u = vx_cmd
+        self.last_cmd_v = vy_cmd
+        self.last_cmd_yaw = world_bearing
+        self.publish_cmd(vx_cmd, vy_cmd, world_bearing)
+
     def run(self):
         rate = rospy.Rate(self.control_rate)
         while not rospy.is_shutdown():
@@ -545,7 +583,16 @@ class BeliefAwareMPCTracker:
             if not self.have_belief:
                 rospy.logwarn_throttle(2.0, '[BeliefAwareMPC] waiting for target belief; running search behavior...')
                 if self.search_enable:
-                    self.publish_search_cmd()
+                    bearing = self.fresh_bearing() if self.bearing_search_enable else None
+                    if bearing is None:
+                        self.publish_search_cmd()
+                    else:
+                        self.publish_bearing_search_cmd(bearing)
+                        rospy.loginfo_throttle(
+                            1.0,
+                            '[BeliefAwareMPC] bearing-guided search: bearing=%.2f rad yaw=%.2f'
+                            % (bearing, self.last_cmd_yaw),
+                        )
                 rate.sleep()
                 continue
             if not self._refresh_boundary_constraints():
