@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import rospy
-from sub_planning.models.fossen3 import Fossen3DOFModel
+from models.fossen3 import Fossen3DOFModel
 
 
 def main():

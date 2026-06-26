@@ -18,7 +18,6 @@ ardupilot_ws/
     ├── config/
     ├── launch/
     ├── scripts/
-    ├── src/sub_planning/
     ├── package.xml
     └── requirements.txt
 ```

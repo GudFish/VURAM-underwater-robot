@@ -6,6 +6,6 @@ from setuptools import find_packages, setup
 setup(
     name='sub_planning',
     version='0.0.0',
-    packages=find_packages('src'),
-    package_dir={'': 'src'},
+    packages=find_packages('scripts'),
+    package_dir={'': 'scripts'},
 )
