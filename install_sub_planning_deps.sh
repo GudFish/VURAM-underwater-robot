@@ -21,22 +21,33 @@ else
   exit 1
 fi
 
-if ! command -v rosdep >/dev/null 2>&1; then
-  echo "rosdep is not installed. Please install it first." >&2
-  exit 1
-fi
-
 if ! command -v catkin_make >/dev/null 2>&1; then
   echo "catkin_make is not available. This is fine for dependency installation only." >&2
 fi
 
-echo "Installing ROS dependencies with rosdep..."
-rosdep install \
-  --from-paths "${WORKSPACE_DIR}/src" \
-  --ignore-src \
-  --rosdistro "${ROS_DISTRO}" \
-  -r \
-  -y
+ROS_APT_PACKAGES=(
+  ros-${ROS_DISTRO}-geometry-msgs
+  ros-${ROS_DISTRO}-nav-msgs
+  ros-${ROS_DISTRO}-mavros-msgs
+  ros-${ROS_DISTRO}-sensor-msgs
+  ros-${ROS_DISTRO}-rospy
+  ros-${ROS_DISTRO}-std-msgs
+  ros-${ROS_DISTRO}-visualization-msgs
+  ros-${ROS_DISTRO}-mavros
+  ros-${ROS_DISTRO}-robot-state-publisher
+  ros-${ROS_DISTRO}-tf
+  ros-${ROS_DISTRO}-tf2-ros
+  ros-${ROS_DISTRO}-rviz
+)
+
+SYSTEM_APT_PACKAGES=(
+  python3-opencv
+  python3-rospkg
+)
+
+echo "Installing ROS dependencies with apt..."
+sudo apt update
+sudo apt install -y "${ROS_APT_PACKAGES[@]}" "${SYSTEM_APT_PACKAGES[@]}"
 
 echo "Installing Python dependencies from ${REQUIREMENTS_FILE}..."
 python3 -m pip install -r "${REQUIREMENTS_FILE}"
