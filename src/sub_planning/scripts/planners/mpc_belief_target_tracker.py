@@ -8,7 +8,7 @@ import casadi as ca
 import rospy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Float32MultiArray
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
@@ -28,6 +28,7 @@ class BeliefAwareMPCTracker:
         self.odom_topic = rospy.get_param('~odom_topic', '/mavros/local_position/odom')
         self.belief_topic = rospy.get_param('~belief_topic', '/target_estimate/belief')
         self.bearing_topic = rospy.get_param('~bearing_topic', '/target_acoustic_bearing')
+        self.scene_candidate_topic = rospy.get_param('~scene_candidate_topic', '/forward_sonar/scene_candidates')
         self.vel_topic = rospy.get_param('~vel_topic', '/target_velocity_xy')
         self.yaw_topic = rospy.get_param('~yaw_topic', '/target_yaw')
 
@@ -95,6 +96,12 @@ class BeliefAwareMPCTracker:
         self.bearing_search_timeout = float(rospy.get_param('~bearing_search_timeout', 1.0))
         self.bearing_search_forward_min_scale = float(rospy.get_param('~bearing_search_forward_min_scale', 0.25))
         self.bearing_search_lateral_gain = float(rospy.get_param('~bearing_search_lateral_gain', 0.35))
+        self.active_scene_enable = bool(rospy.get_param('~active_scene_enable', True))
+        self.active_scene_timeout = float(rospy.get_param('~active_scene_timeout', 0.8))
+        self.active_scene_max_points = int(rospy.get_param('~active_scene_max_points', 8))
+        self.active_scene_min_score = float(rospy.get_param('~active_scene_min_score', 0.08))
+        self.active_scene_sep_sigma_deg = float(rospy.get_param('~active_scene_sep_sigma_deg', 6.0))
+        self.w_active_scene_separation = float(rospy.get_param('~w_active_scene_separation', 2.0))
 
         dyn = rospy.get_param('~dynamics', {})
         self.m11 = float(dyn.get('m11', 40.0))
@@ -116,6 +123,8 @@ class BeliefAwareMPCTracker:
         self.have_belief = False
         self.latest_bearing = None
         self.latest_bearing_stamp = None
+        self.scene_candidates_world = []
+        self.scene_candidates_stamp = None
 
         self.x = 0.0
         self.y = 0.0
@@ -156,6 +165,12 @@ class BeliefAwareMPCTracker:
         self.odom_sub = rospy.Subscriber(self.odom_topic, Odometry, self.odom_cb, queue_size=1)
         self.belief_sub = rospy.Subscriber(self.belief_topic, Odometry, self.belief_cb, queue_size=1)
         self.bearing_sub = rospy.Subscriber(self.bearing_topic, Float32, self.bearing_cb, queue_size=10)
+        self.scene_candidate_sub = rospy.Subscriber(
+            self.scene_candidate_topic,
+            Float32MultiArray,
+            self.scene_candidates_cb,
+            queue_size=2,
+        )
         self.vel_pub = rospy.Publisher(self.vel_topic, Twist, queue_size=10)
         self.yaw_pub = rospy.Publisher(self.yaw_topic, Float32, queue_size=10)
 
@@ -220,7 +235,8 @@ class BeliefAwareMPCTracker:
         yaw_cmd = ca.SX.sym('Y', self.N)
         w = ca.vertcat(u_cmd, v_cmd, yaw_cmd)
 
-        p = ca.SX.sym('P', 20)
+        scene_slots = max(self.active_scene_max_points, 0)
+        p = ca.SX.sym('P', 20 + 3 * scene_slots)
         rx = p[0]
         ry = p[1]
         rpsi = p[2]
@@ -241,6 +257,7 @@ class BeliefAwareMPCTracker:
         pvxvx = p[17]
         pvyvy = p[18]
         pvxvy = p[19]
+        scene_base = 20
 
         m = ca.DM([[self.m11, 0.0, 0.0], [0.0, self.m22, self.m23], [0.0, self.m23, self.m33]])
         m_inv = ca.inv(m)
@@ -252,6 +269,7 @@ class BeliefAwareMPCTracker:
         sonar_half_fov = max(math.radians(self.sonar_fov_deg) * 0.5, 1e-3)
         sonar_max_range = max(self.sonar_max_range, self.sonar_min_range + 1e-3)
         sonar_range_span = max(sonar_max_range - self.sonar_min_range, 1e-3)
+        active_sep_sigma = max(math.radians(self.active_scene_sep_sigma_deg), 1e-3)
 
         def softplus_hinge(expr):
             return 0.5 * (expr + ca.sqrt(expr * expr + self.sonar_soft_eps))
@@ -347,6 +365,30 @@ class BeliefAwareMPCTracker:
 
             track_scale = 0.25 + 0.75 * (1.0 - alpha)
             cte_scale = 0.2 + 0.8 * (1.0 - alpha)
+            active_scene_overlap = 0.0
+            if self.active_scene_enable and scene_slots >= 2:
+                scene_bearings = []
+                scene_weights = []
+                for idx in range(scene_slots):
+                    base = scene_base + 3 * idx
+                    sx = p[base]
+                    sy = p[base + 1]
+                    sw = p[base + 2]
+                    sdx = sx - rx
+                    sdy = sy - ry
+                    bearing_i = ca.atan2(sdy, sdx) - rpsi
+                    bearing_i = ca.atan2(ca.sin(bearing_i), ca.cos(bearing_i))
+                    scene_bearings.append(bearing_i)
+                    scene_weights.append(sw)
+                for i in range(scene_slots):
+                    for jj in range(i + 1, scene_slots):
+                        dtheta = ca.atan2(
+                            ca.sin(scene_bearings[i] - scene_bearings[jj]),
+                            ca.cos(scene_bearings[i] - scene_bearings[jj]),
+                        )
+                        active_scene_overlap = active_scene_overlap + scene_weights[i] * scene_weights[jj] * ca.exp(
+                            -0.5 * (dtheta / active_sep_sigma) * (dtheta / active_sep_sigma)
+                        )
 
             j = j + self.w_track * track_scale * (range_err * range_err)
             j = j + self.w_yaw * yaw_err * yaw_err
@@ -364,6 +406,7 @@ class BeliefAwareMPCTracker:
                 + (too_far / sonar_range_span) * (too_far / sonar_range_span)
             )
             j = j + self.w_sonar_front * (behind / max(self.sonar_min_range, 1e-3)) * (behind / max(self.sonar_min_range, 1e-3))
+            j = j + alpha * self.w_active_scene_separation * active_scene_overlap
 
             prev_u = u_cmd[_k]
             prev_v = v_cmd[_k]
@@ -472,6 +515,68 @@ class BeliefAwareMPCTracker:
             return None
         return self.latest_bearing
 
+    def scene_candidates_cb(self, msg):
+        if not self.have_odom or len(msg.data) < 1:
+            return
+
+        count = max(0, int(round(float(msg.data[0]))))
+        stride = 8
+        candidates = []
+        for idx in range(count):
+            base = 1 + idx * stride
+            if base + stride > len(msg.data):
+                break
+
+            measured_range = max(0.0, float(msg.data[base]))
+            bearing = wrap_pi(float(msg.data[base + 1]))
+            score = max(0.0, min(1.0, float(msg.data[base + 2])))
+            uncertainty = max(0.0, min(1.0, float(msg.data[base + 3])))
+            if score < self.active_scene_min_score:
+                continue
+
+            world_bearing = wrap_pi(self.psi + bearing)
+            wx = self.x + measured_range * math.cos(world_bearing)
+            wy = self.y + measured_range * math.sin(world_bearing)
+            weight = score * (1.0 - uncertainty) / math.sqrt(max(measured_range, 1.0))
+            candidates.append(
+                {
+                    'x': wx,
+                    'y': wy,
+                    'weight': max(weight, 0.0),
+                    'range': measured_range,
+                    'score': score,
+                    'uncertainty': uncertainty,
+                }
+            )
+
+        candidates.sort(key=lambda item: item['weight'], reverse=True)
+        self.scene_candidates_world = candidates[:max(self.active_scene_max_points, 0)]
+        self.scene_candidates_stamp = rospy.Time.now()
+
+    def active_scene_is_fresh(self):
+        if not self.active_scene_enable or self.scene_candidates_stamp is None:
+            return False
+        age = (rospy.Time.now() - self.scene_candidates_stamp).to_sec()
+        return age <= max(self.active_scene_timeout, 0.0)
+
+    def active_scene_parameters(self):
+        params = []
+        if self.active_scene_is_fresh():
+            total_weight = sum(item['weight'] for item in self.scene_candidates_world)
+            norm = max(total_weight, 1.0e-6)
+            selected = self.scene_candidates_world[:max(self.active_scene_max_points, 0)]
+        else:
+            norm = 1.0
+            selected = []
+
+        for idx in range(max(self.active_scene_max_points, 0)):
+            if idx < len(selected):
+                item = selected[idx]
+                params.extend([item['x'], item['y'], self._clip(item['weight'] / norm, 0.0, 1.0)])
+            else:
+                params.extend([0.0, 0.0, 0.0])
+        return params
+
     def _shift_warm_start(self):
         if self.N <= 1:
             return
@@ -526,7 +631,7 @@ class BeliefAwareMPCTracker:
             max(self.cov_floor, self.target_cov_vxvx),
             max(self.cov_floor, self.target_cov_vyvy),
             self.target_cov_vxvy,
-        ]
+        ] + self.active_scene_parameters()
 
         args = {'x0': x0, 'lbx': self.lbx, 'ubx': self.ubx, 'lbg': self.lbg, 'ubg': self.ubg, 'p': p}
         if self.last_lam_x is not None and self.last_lam_g is not None:

@@ -11,6 +11,12 @@
   <arg name="target_mesh_resource" default="package://sub_planning/meshes/AUV.STL"/>
   <arg name="target_mesh_scale" default="1.0"/>
   <arg name="target_mesh_z" default="0.0"/>
+  <arg name="obstacle_marker_topic" default="/dynamic_obstacles/markers"/>
+  <arg name="obstacle_count" default="6"/>
+  <arg name="obstacle_size_min" default="1.0"/>
+  <arg name="obstacle_size_max" default="2.0"/>
+  <arg name="obstacle_speed_min" default="0.03"/>
+  <arg name="obstacle_speed_max" default="0.15"/>
 
   <node name="dynamic_target_generator" pkg="sub_planning" type="dynamic_target_generator.py" output="screen">
     <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>
@@ -19,6 +25,12 @@
     <param name="target_mesh_resource" value="$(arg target_mesh_resource)"/>
     <param name="target_mesh_scale" value="$(arg target_mesh_scale)"/>
     <param name="target_mesh_z" value="$(arg target_mesh_z)"/>
+    <param name="obstacle_marker_topic" value="$(arg obstacle_marker_topic)"/>
+    <param name="obstacle_count" value="$(arg obstacle_count)"/>
+    <param name="obstacle_size_min" value="$(arg obstacle_size_min)"/>
+    <param name="obstacle_size_max" value="$(arg obstacle_size_max)"/>
+    <param name="obstacle_speed_min" value="$(arg obstacle_speed_min)"/>
+    <param name="obstacle_speed_max" value="$(arg obstacle_speed_max)"/>
     <param name="init_near_robot" value="$(arg init_near_robot)"/>
     <param name="init_min_radius" value="$(arg init_min_radius)"/>
     <param name="init_max_radius" value="$(arg init_max_radius)"/>

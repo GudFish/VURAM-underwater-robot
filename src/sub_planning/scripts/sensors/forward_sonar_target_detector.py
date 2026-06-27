@@ -22,6 +22,7 @@ class ForwardSonarTargetDetector:
         self.bearing_topic = rospy.get_param('~bearing_topic', '/target_acoustic_bearing')
         self.measurement_topic = rospy.get_param('~measurement_topic', '/forward_sonar/measurement')
         self.candidate_topic = rospy.get_param('~candidate_topic', '/forward_sonar/candidates')
+        self.scene_candidate_topic = rospy.get_param('~scene_candidate_topic', '/forward_sonar/scene_candidates')
         self.debug_topic = rospy.get_param('~debug_topic', '/forward_sonar/detection_debug')
         self.debug_image_topic = rospy.get_param('~debug_image_topic', '/forward_sonar/debug_image')
 
@@ -34,6 +35,8 @@ class ForwardSonarTargetDetector:
         self.publish_min_score = float(rospy.get_param('~publish_min_score', 0.15))
         self.candidate_min_score = float(rospy.get_param('~candidate_min_score', 0.08))
         self.max_candidates = int(rospy.get_param('~max_candidates', 12))
+        self.publish_scene_candidates = rospy.get_param('~publish_scene_candidates', True)
+        self.max_scene_candidates = int(rospy.get_param('~max_scene_candidates', 16))
         self.bearing_candidate_gate_deg = float(rospy.get_param('~bearing_candidate_gate_deg', 12.0))
         self.publish_candidates_without_bearing = rospy.get_param('~publish_candidates_without_bearing', True)
         self.publish_legacy_measurement = rospy.get_param('~publish_legacy_measurement', False)
@@ -71,14 +74,16 @@ class ForwardSonarTargetDetector:
         self.image_sub = rospy.Subscriber(self.image_topic, Image, self.image_cb, queue_size=1)
         self.measurement_pub = rospy.Publisher(self.measurement_topic, Float32MultiArray, queue_size=10)
         self.candidate_pub = rospy.Publisher(self.candidate_topic, Float32MultiArray, queue_size=10)
+        self.scene_candidate_pub = rospy.Publisher(self.scene_candidate_topic, Float32MultiArray, queue_size=10)
         self.debug_pub = rospy.Publisher(self.debug_topic, Float32MultiArray, queue_size=10)
         self.debug_image_pub = rospy.Publisher(self.debug_image_topic, Image, queue_size=2)
 
         rospy.loginfo(
-            '[ForwardSonarDetector] image=%s bearing=%s candidates=%s debug_image=%s',
+            '[ForwardSonarDetector] image=%s bearing=%s candidates=%s scene_candidates=%s debug_image=%s',
             self.image_topic,
             self.bearing_topic,
             self.candidate_topic,
+            self.scene_candidate_topic,
             self.debug_image_topic,
         )
 
@@ -97,15 +102,10 @@ class ForwardSonarTargetDetector:
 
         image = np.frombuffer(msg.data, dtype=np.uint8).reshape((msg.height, msg.width))
         bearing = self.valid_guidance_bearing(log_warnings=False)
-        if bearing is None and not self.publish_candidates_without_bearing:
-            self.publish_debug_image(msg, image)
-            rospy.logwarn_throttle(2.0, '[ForwardSonarDetector] waiting for bearing-guided acquisition.')
-            return
 
         blurred = cv2.GaussianBlur(image, (5, 5), 0)
         footprint_mask = self.valid_mask(msg.height, msg.width)
-        mask = self.build_search_mask(msg.height, msg.width, footprint_mask, bearing)
-        valid_pixels = blurred[mask]
+        valid_pixels = blurred[footprint_mask]
         if valid_pixels.size == 0:
             self.publish_debug_image(msg, image)
             return
@@ -115,7 +115,7 @@ class ForwardSonarTargetDetector:
             float(np.percentile(valid_pixels, np.clip(self.threshold_percentile, 0.0, 100.0))),
         )
 
-        raw_binary, threshold_map = self.build_detection_binary(blurred, mask, global_threshold)
+        raw_binary, threshold_map = self.build_detection_binary(blurred, footprint_mask, global_threshold)
         boundary_binary = cv2.morphologyEx(raw_binary, cv2.MORPH_OPEN, self.kernel)
         boundary_mask, suppressed = self.extract_boundary_mask(boundary_binary, msg.height, msg.width)
         binary = np.array(raw_binary, copy=True)
@@ -129,16 +129,22 @@ class ForwardSonarTargetDetector:
             binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, self.kernel)
 
         background_level = float(np.median(valid_pixels))
-        candidates, candidate_suppressed = self.extract_candidates(
-            image, binary, threshold_map, background_level, bearing
+        scene_candidates, candidate_suppressed = self.extract_candidates(
+            image, binary, threshold_map, background_level, None, self.max_scene_candidates
         )
         suppressed.extend(candidate_suppressed)
-        self.publish_debug_image(msg, image, candidates, bearing, suppressed)
+        if self.publish_scene_candidates:
+            self.publish_candidates(scene_candidates, self.scene_candidate_pub)
+
+        candidates = self.filter_candidates_for_pdaf(scene_candidates, bearing)
+        self.publish_debug_image(msg, image, candidates, bearing, suppressed, scene_candidates)
 
         if not candidates:
+            if bearing is None and not self.publish_candidates_without_bearing:
+                rospy.logwarn_throttle(2.0, '[ForwardSonarDetector] waiting for bearing-guided acquisition.')
             return
 
-        self.publish_candidates(candidates)
+        self.publish_candidates(candidates, self.candidate_pub)
         if self.publish_legacy_measurement:
             self.publish_legacy_best_measurement(candidates)
 
@@ -246,7 +252,7 @@ class ForwardSonarTargetDetector:
 
         return boundary_mask.astype(bool), suppressed
 
-    def extract_candidates(self, image, binary, threshold_map, background_level, bearing):
+    def extract_candidates(self, image, binary, threshold_map, background_level, bearing, max_candidates=None):
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
         if num_labels <= 1:
             return [], []
@@ -341,7 +347,38 @@ class ForwardSonarTargetDetector:
                 -item['intensity_sum'],
             )
         )
-        return candidates[:max(self.max_candidates, 1)], suppressed
+        limit = self.max_candidates if max_candidates is None else max_candidates
+        return candidates[:max(int(limit), 1)], suppressed
+
+    def filter_candidates_for_pdaf(self, scene_candidates, bearing):
+        if bearing is None:
+            if not self.publish_candidates_without_bearing:
+                return []
+            return list(scene_candidates[:max(self.max_candidates, 1)])
+
+        filtered = []
+        gate = math.radians(self.bearing_candidate_gate_deg)
+        for item in scene_candidates:
+            bearing_error = abs(self.wrap_pi(item['bearing'] - bearing))
+            if bearing_error > gate:
+                continue
+            candidate = dict(item)
+            candidate['bearing_error'] = float(bearing_error)
+            candidate['uncertainty'] = self.estimate_candidate_uncertainty(
+                candidate['score'],
+                candidate['mean_contrast'],
+                bearing_error,
+            )
+            filtered.append(candidate)
+
+        filtered.sort(
+            key=lambda item: (
+                item['bearing_error'],
+                -item['score'],
+                -item['intensity_sum'],
+            )
+        )
+        return filtered[:max(self.max_candidates, 1)]
 
     def component_shape_metrics(self, component_mask, bbox, area, height, width):
         x, y, w, h = bbox
@@ -447,7 +484,9 @@ class ForwardSonarTargetDetector:
 
         return float(np.clip(uncertainty, 0.0, 1.0))
 
-    def publish_candidates(self, candidates):
+    def publish_candidates(self, candidates, publisher=None):
+        if publisher is None:
+            publisher = self.candidate_pub
         msg = Float32MultiArray()
         data = [float(len(candidates))]
         for item in candidates:
@@ -464,7 +503,7 @@ class ForwardSonarTargetDetector:
                 ]
             )
         msg.data = data
-        self.candidate_pub.publish(msg)
+        publisher.publish(msg)
 
     def publish_legacy_best_measurement(self, candidates):
         if not candidates:
@@ -474,13 +513,19 @@ class ForwardSonarTargetDetector:
         msg.data = [best['range'], best['bearing'], best['score'], best['uncertainty']]
         self.measurement_pub.publish(msg)
 
-    def publish_debug_image(self, source_msg, image, candidates=None, bearing=None, suppressed=None):
+    def publish_debug_image(self, source_msg, image, candidates=None, bearing=None, suppressed=None, scene_candidates=None):
         debug = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
         if bearing is not None:
             self.draw_bearing_gate(debug, bearing)
         for item in suppressed or []:
             x, y, w, h = item['bbox']
             cv2.rectangle(debug, (x, y), (x + w - 1, y + h - 1), (0, 0, 255), 1)
+        pdaf_labels = set(item.get('label') for item in candidates or [])
+        for detection in scene_candidates or []:
+            if detection.get('label') in pdaf_labels:
+                continue
+            x, y, w, h = detection['bbox']
+            cv2.rectangle(debug, (x, y), (x + w - 1, y + h - 1), (0, 220, 220), 1)
         for detection in candidates or []:
             x, y, w, h = detection['bbox']
             cv2.rectangle(debug, (x, y), (x + w - 1, y + h - 1), (0, 220, 0), 1)

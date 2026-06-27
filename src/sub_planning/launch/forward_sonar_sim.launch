@@ -4,6 +4,8 @@
   <arg name="target_pose_topic" default="/dynamic_target/pose"/>
   <arg name="image_topic" default="/forward_sonar/image"/>
   <arg name="marker_topic" default="/forward_sonar/markers"/>
+  <arg name="obstacle_marker_topic" default="/dynamic_obstacles/markers"/>
+  <arg name="enable_obstacle_echoes" default="true"/>
   <arg name="target_mesh_resource" default="package://sub_planning/meshes/AUV.STL"/>
   <arg name="target_mesh_scale" default="1.0"/>
   <arg name="show_range" default="true"/>
@@ -12,6 +14,8 @@
   <node name="forward_sonar_sim" pkg="sub_planning" type="forward_sonar_sim.py" output="screen">
     <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>
     <param name="target_pose_topic" value="$(arg target_pose_topic)"/>
+    <param name="obstacle_marker_topic" value="$(arg obstacle_marker_topic)"/>
+    <param name="enable_obstacle_echoes" value="$(arg enable_obstacle_echoes)"/>
     <param name="image_topic" value="$(arg image_topic)"/>
     <param name="target_model" value="mesh"/>
     <param name="target_mesh_resource" value="$(arg target_mesh_resource)"/>
@@ -22,6 +26,9 @@
     <param name="target_mesh_occlusion_cell" value="2"/>
     <param name="target_mesh_shadow_start" value="0.45"/>
     <param name="target_mesh_shadow_length" value="2.0"/>
+    <param name="obstacle_strength" value="170.0"/>
+    <param name="obstacle_sample_count" value="260"/>
+    <param name="obstacle_point_radius" value="0.11"/>
     <param name="output_auto_gain" value="true"/>
     <param name="output_gain_percentile" value="99.4"/>
     <param name="publish_waiting_image" value="true"/>

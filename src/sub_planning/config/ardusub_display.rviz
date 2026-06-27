@@ -158,6 +158,14 @@ Visualization Manager:
         dynamic_target: true
       Queue Size: 10
       Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /dynamic_obstacles/markers
+      Name: Dynamic Obstacles
+      Namespaces:
+        dynamic_obstacles: true
+      Queue Size: 10
+      Value: true
     - Alpha: 1
       Axes Length: 1
       Axes Radius: 0.10000000149011612

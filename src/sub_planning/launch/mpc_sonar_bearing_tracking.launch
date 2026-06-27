@@ -24,29 +24,32 @@
     <param name="bearing_topic" value="/target_acoustic_bearing"/>
     <param name="measurement_topic" value="/forward_sonar/measurement"/>
     <param name="candidate_topic" value="/forward_sonar/candidates"/>
+    <param name="scene_candidate_topic" value="/forward_sonar/scene_candidates"/>
     <param name="debug_topic" value="/forward_sonar/detection_debug"/>
     <param name="debug_image_topic" value="/forward_sonar/debug_image"/>
     <param name="fov_deg" value="130.0"/>
     <param name="max_range" value="30.0"/>
     <param name="min_range" value="0.2"/>
-    <param name="threshold_percentile" value="99.2"/>
-    <param name="min_threshold" value="40.0"/>
-    <param name="min_blob_area" value="18"/>
+    <param name="threshold_percentile" value="98.5"/>
+    <param name="min_threshold" value="30.0"/>
+    <param name="min_blob_area" value="8"/>
     <param name="publish_min_score" value="0.15"/>
-    <param name="candidate_min_score" value="0.08"/>
+    <param name="candidate_min_score" value="0.025"/>
     <param name="max_candidates" value="12"/>
+    <param name="publish_scene_candidates" value="true"/>
+    <param name="max_scene_candidates" value="16"/>
     <param name="bearing_candidate_gate_deg" value="12.0"/>
     <param name="publish_candidates_without_bearing" value="true"/>
     <param name="publish_legacy_measurement" value="false"/>
-    <param name="min_mean_contrast" value="14.0"/>
-    <param name="min_peak_delta" value="10.0"/>
-    <param name="min_excess_score" value="0.10"/>
+    <param name="min_mean_contrast" value="7.0"/>
+    <param name="min_peak_delta" value="6.0"/>
+    <param name="min_excess_score" value="0.025"/>
     <param name="bearing_timeout" value="1.0"/>
     <param name="use_local_threshold" value="true"/>
     <param name="local_threshold_window_px" value="31"/>
-    <param name="local_threshold_std_scale" value="1.4"/>
-    <param name="local_threshold_min_delta" value="6.0"/>
-    <param name="local_threshold_global_floor_ratio" value="0.30"/>
+    <param name="local_threshold_std_scale" value="0.9"/>
+    <param name="local_threshold_min_delta" value="3.0"/>
+    <param name="local_threshold_global_floor_ratio" value="0.25"/>
     <param name="suppress_boundary_like_blobs" value="true"/>
     <param name="boundary_min_area" value="120"/>
     <param name="boundary_min_long_axis_px" value="45.0"/>
@@ -113,6 +116,7 @@
     <param name="odom_topic" value="/mavros/local_position/odom"/>
     <param name="belief_topic" value="/target_estimate/belief"/>
     <param name="bearing_topic" value="/target_acoustic_bearing"/>
+    <param name="scene_candidate_topic" value="/forward_sonar/scene_candidates"/>
     <param name="vel_topic" value="/target_velocity_xy"/>
     <param name="yaw_topic" value="/target_yaw"/>
     <param name="control_rate" value="5.0"/>
@@ -172,5 +176,11 @@
     <param name="bearing_search_timeout" value="1.0"/>
     <param name="bearing_search_forward_min_scale" value="0.25"/>
     <param name="bearing_search_lateral_gain" value="0.35"/>
+    <param name="active_scene_enable" value="true"/>
+    <param name="active_scene_timeout" value="0.8"/>
+    <param name="active_scene_max_points" value="8"/>
+    <param name="active_scene_min_score" value="0.08"/>
+    <param name="active_scene_sep_sigma_deg" value="6.0"/>
+    <param name="w_active_scene_separation" value="2.0"/>
   </node>
 </launch>

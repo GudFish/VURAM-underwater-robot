@@ -12,6 +12,7 @@ import random
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image
+from visualization_msgs.msg import Marker, MarkerArray
 
 
 class ForwardSonarSim:
@@ -20,6 +21,7 @@ class ForwardSonarSim:
 
         self.robot_odom_topic = rospy.get_param('~robot_odom_topic', '/mavros/local_position/odom')
         self.target_pose_topic = rospy.get_param('~target_pose_topic', '/dynamic_target/pose')
+        self.obstacle_marker_topic = rospy.get_param('~obstacle_marker_topic', '/dynamic_obstacles/markers')
         self.image_topic = rospy.get_param('~image_topic', '/forward_sonar/image')
         self.boundary_param = rospy.get_param('~boundary_param', '/boundary_loader/enu_points')
 
@@ -58,6 +60,10 @@ class ForwardSonarSim:
         self.target_mesh_shadow = rospy.get_param('~target_mesh_shadow', True)
         self.target_mesh_shadow_start = float(rospy.get_param('~target_mesh_shadow_start', 0.45))
         self.target_mesh_shadow_length = float(rospy.get_param('~target_mesh_shadow_length', 2.0))
+        self.enable_obstacle_echoes = rospy.get_param('~enable_obstacle_echoes', True)
+        self.obstacle_strength = float(rospy.get_param('~obstacle_strength', 120.0))
+        self.obstacle_sample_count = int(rospy.get_param('~obstacle_sample_count', 180))
+        self.obstacle_point_radius = float(rospy.get_param('~obstacle_point_radius', 0.08))
         self.use_boundary = rospy.get_param('~use_boundary', True)
         self.boundary_ray_step_deg = float(rospy.get_param('~boundary_ray_step_deg', 1.0))
 
@@ -72,11 +78,13 @@ class ForwardSonarSim:
         self.target_z = 0.0
         self.target_yaw = 0.0
         self.target_mesh_points, self.target_mesh_normals, self.target_mesh_weights = self.load_target_mesh_samples()
+        self.obstacle_markers = []
         self.boundary_points = []
         self.last_boundary_reload = rospy.Time(0)
 
         self.odom_sub = rospy.Subscriber(self.robot_odom_topic, Odometry, self.odom_cb, queue_size=1)
         self.target_sub = rospy.Subscriber(self.target_pose_topic, PoseStamped, self.target_cb, queue_size=1)
+        self.obstacle_sub = rospy.Subscriber(self.obstacle_marker_topic, MarkerArray, self.obstacle_cb, queue_size=1)
         self.image_pub = rospy.Publisher(self.image_topic, Image, queue_size=2)
 
         period = 1.0 / max(self.publish_rate, 1e-3)
@@ -109,6 +117,9 @@ class ForwardSonarSim:
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         self.target_yaw = math.atan2(siny_cosp, cosy_cosp)
         self.have_target = True
+
+    def obstacle_cb(self, msg):
+        self.obstacle_markers = [marker for marker in msg.markers if marker.action != Marker.DELETE]
 
     def resolve_package_uri(self, uri):
         if uri.startswith('package://'):
@@ -433,6 +444,116 @@ class ForwardSonarSim:
         nearest = visible[np.argmin(vr[visible])]
         return vr[nearest], vbearing[nearest]
 
+    def add_obstacle_echoes(self, image):
+        if not self.enable_obstacle_echoes or not self.obstacle_markers:
+            return
+        for marker in self.obstacle_markers:
+            if marker.type not in (Marker.SPHERE, Marker.CUBE, Marker.CYLINDER):
+                continue
+            samples = self.sample_obstacle_marker(marker)
+            if samples.size == 0:
+                continue
+            forward, lateral, vertical = self.points_world_to_body(samples)
+            horizontal_range = np.hypot(forward, lateral)
+            slant_range = np.hypot(horizontal_range, vertical)
+            bearing = np.arctan2(lateral, np.maximum(forward, 1e-6))
+            half_fov = math.radians(self.fov_deg) * 0.5
+            valid = (
+                (forward > self.min_range)
+                & (slant_range <= self.max_range)
+                & (np.abs(bearing) <= half_fov)
+            )
+            if not np.any(valid):
+                continue
+            vf = forward[valid]
+            vl = lateral[valid]
+            vr = slant_range[valid]
+            order = np.argsort(vr)
+            for idx in order[:max(1, min(len(order), self.obstacle_sample_count))]:
+                distance_gain = 1.0 / (1.0 + 0.022 * vr[idx] * vr[idx])
+                strength = self.obstacle_strength * (0.5 + 0.5 * random.random()) * distance_gain
+                self.add_echo_blob(image, vf[idx], vl[idx], strength, self.obstacle_point_radius)
+
+    def sample_obstacle_marker(self, marker):
+        rng = np.random.default_rng(marker.id + 1009)
+        count = max(16, self.obstacle_sample_count)
+        if marker.type == Marker.SPHERE:
+            local = self.sample_sphere_surface(count, marker.scale.x * 0.5, rng)
+        elif marker.type == Marker.CYLINDER:
+            local = self.sample_cylinder_surface(count, marker.scale.x * 0.5, marker.scale.z, rng)
+        else:
+            local = self.sample_box_surface(count, marker.scale.x, marker.scale.y, marker.scale.z, rng)
+        return self.local_points_to_world(local, marker)
+
+    @staticmethod
+    def sample_sphere_surface(count, radius, rng):
+        radius = max(float(radius), 1e-3)
+        z = rng.uniform(-1.0, 1.0, count)
+        theta = rng.uniform(-math.pi, math.pi, count)
+        r_xy = np.sqrt(np.maximum(1.0 - z * z, 0.0))
+        return np.column_stack((radius * r_xy * np.cos(theta), radius * r_xy * np.sin(theta), radius * z))
+
+    @staticmethod
+    def sample_box_surface(count, sx, sy, sz, rng):
+        half = np.array([max(float(sx), 1e-3), max(float(sy), 1e-3), max(float(sz), 1e-3)], dtype=float) * 0.5
+        points = np.empty((count, 3), dtype=float)
+        faces = rng.integers(0, 6, count)
+        for idx, face in enumerate(faces):
+            axis = face // 2
+            sign = -1.0 if face % 2 == 0 else 1.0
+            point = rng.uniform(-half, half)
+            point[axis] = sign * half[axis]
+            points[idx] = point
+        return points
+
+    @staticmethod
+    def sample_cylinder_surface(count, radius, height, rng):
+        radius = max(float(radius), 1e-3)
+        half_h = max(float(height), 1e-3) * 0.5
+        points = np.empty((count, 3), dtype=float)
+        part = rng.random(count)
+        theta = rng.uniform(-math.pi, math.pi, count)
+        side = part < 0.7
+        points[side, 0] = radius * np.cos(theta[side])
+        points[side, 1] = radius * np.sin(theta[side])
+        points[side, 2] = rng.uniform(-half_h, half_h, np.count_nonzero(side))
+        cap = ~side
+        cap_count = np.count_nonzero(cap)
+        if cap_count > 0:
+            cap_r = radius * np.sqrt(rng.random(cap_count))
+            cap_theta = theta[cap]
+            points[cap, 0] = cap_r * np.cos(cap_theta)
+            points[cap, 1] = cap_r * np.sin(cap_theta)
+            points[cap, 2] = np.where(rng.random(cap_count) < 0.5, -half_h, half_h)
+        return points
+
+    @staticmethod
+    def marker_yaw(marker):
+        q = marker.pose.orientation
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        return math.atan2(siny_cosp, cosy_cosp)
+
+    def local_points_to_world(self, local, marker):
+        yaw = self.marker_yaw(marker)
+        cy = math.cos(yaw)
+        sy = math.sin(yaw)
+        world = np.empty_like(local)
+        world[:, 0] = marker.pose.position.x + cy * local[:, 0] - sy * local[:, 1]
+        world[:, 1] = marker.pose.position.y + sy * local[:, 0] + cy * local[:, 1]
+        world[:, 2] = marker.pose.position.z + local[:, 2]
+        return world
+
+    def points_world_to_body(self, world):
+        dx = world[:, 0] - self.robot_x
+        dy = world[:, 1] - self.robot_y
+        cr = math.cos(self.robot_yaw)
+        sr = math.sin(self.robot_yaw)
+        forward = cr * dx + sr * dy
+        lateral = -sr * dx + cr * dy
+        vertical = world[:, 2] - self.robot_z
+        return forward, lateral, vertical
+
     def add_mesh_shadow(self, image, forward, lateral, strength):
         self.add_radial_shadow(
             image,
@@ -542,6 +663,7 @@ class ForwardSonarSim:
         self.reload_boundary_if_needed()
         image = self.make_base_image()
         self.add_boundary_echoes(image)
+        self.add_obstacle_echoes(image)
         self.add_target_echo(image)
         self.publish_image(image, stamp)
 

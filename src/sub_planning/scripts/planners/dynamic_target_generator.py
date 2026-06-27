@@ -6,7 +6,7 @@ import numpy as np
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from shapely.geometry import Point, Polygon
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
 
 class DynamicTargetGenerator:
     def __init__(self):
@@ -21,6 +21,15 @@ class DynamicTargetGenerator:
         self.target_mesh_scale = float(rospy.get_param('~target_mesh_scale', 1.0))
         self.target_mesh_z = float(rospy.get_param('~target_mesh_z', 0.0))
         self.target_mesh_color = rospy.get_param('~target_mesh_color', [1.0, 0.84, 0.0, 0.92])
+        self.obstacle_marker_topic = rospy.get_param('~obstacle_marker_topic', '/dynamic_obstacles/markers')
+        self.obstacle_count = int(rospy.get_param('~obstacle_count', 6))
+        self.obstacle_max_marker_id = int(rospy.get_param('~obstacle_max_marker_id', 64))
+        self.obstacle_size_min = float(rospy.get_param('~obstacle_size_min', 1.0))
+        self.obstacle_size_max = float(rospy.get_param('~obstacle_size_max', 2.5))
+        self.obstacle_speed_min = float(rospy.get_param('~obstacle_speed_min', 0.03))
+        self.obstacle_speed_max = float(rospy.get_param('~obstacle_speed_max', 0.15))
+        self.obstacle_shapes = rospy.get_param('~obstacle_shapes', ['sphere', 'box', 'cylinder'])
+        self.obstacle_boundary_margin = float(rospy.get_param('~obstacle_boundary_margin', 2.0))
         self.init_near_robot = rospy.get_param('~init_near_robot', True)
         self.init_min_radius = float(rospy.get_param('~init_min_radius', 6.0))
         self.init_max_radius = float(rospy.get_param('~init_max_radius', 12.0))
@@ -85,6 +94,8 @@ class DynamicTargetGenerator:
         # ROS发布者
         self.pose_pub = rospy.Publisher(self.target_pose_topic, PoseStamped, queue_size=10)
         self.marker_pub = rospy.Publisher(self.target_marker_topic, Marker, queue_size=10)
+        self.obstacle_pub = rospy.Publisher(self.obstacle_marker_topic, MarkerArray, queue_size=10)
+        self.obstacles = self.create_obstacles()
         self.rate = rospy.Rate(10)  # 10 Hz
         
         rospy.loginfo("动态目标生成器已启动，边界内初始位置: (%.2f, %.2f)", self.pos[0], self.pos[1])
@@ -238,11 +249,102 @@ class DynamicTargetGenerator:
             self.pick_new_mode()
         
         self.pos = new_pos
+
+    def create_obstacles(self):
+        obstacles = []
+        shapes = [str(item).lower() for item in self.obstacle_shapes]
+        shapes = [item for item in shapes if item in ('sphere', 'box', 'cylinder')]
+        if not shapes:
+            shapes = ['sphere', 'box', 'cylinder']
+
+        size_min = max(0.05, min(self.obstacle_size_min, self.obstacle_size_max))
+        size_max = max(size_min, self.obstacle_size_max)
+        speed_min = max(0.0, min(self.obstacle_speed_min, self.obstacle_speed_max))
+        speed_max = max(speed_min, self.obstacle_speed_max)
+
+        for idx in range(max(0, self.obstacle_count)):
+            shape = str(np.random.choice(shapes))
+            pos = self.sample_global_position()
+            heading = np.random.uniform(-math.pi, math.pi)
+            speed = np.random.uniform(speed_min, speed_max)
+            obstacle = {
+                'id': idx,
+                'shape': shape,
+                'pos': pos,
+                'heading': heading,
+                'speed': speed,
+                'scale': self.sample_obstacle_scale(shape, size_min, size_max),
+                'yaw': np.random.uniform(-math.pi, math.pi),
+                'yaw_rate': np.random.uniform(-0.08, 0.08),
+                'color': self.sample_obstacle_color(),
+            }
+            obstacles.append(obstacle)
+        rospy.loginfo("[DynamicTarget] generated %d sonar obstacle markers on %s", len(obstacles), self.obstacle_marker_topic)
+        return obstacles
+
+    def sample_obstacle_scale(self, shape, size_min, size_max):
+        if shape == 'sphere':
+            size = np.random.uniform(size_min, size_max)
+            return np.array([size, size, size], dtype=float)
+        if shape == 'cylinder':
+            diameter = np.random.uniform(size_min, size_max)
+            height = np.random.uniform(size_min, size_max)
+            return np.array([diameter, diameter, height], dtype=float)
+        return np.array(
+            [
+                np.random.uniform(size_min, size_max),
+                np.random.uniform(size_min, size_max),
+                np.random.uniform(size_min, size_max),
+            ],
+            dtype=float,
+        )
+
+    @staticmethod
+    def sample_obstacle_color():
+        palette = [
+            [0.25, 0.75, 1.0, 0.72],
+            [1.0, 0.45, 0.22, 0.72],
+            [0.55, 0.95, 0.35, 0.72],
+            [0.95, 0.85, 0.25, 0.72],
+        ]
+        return list(palette[np.random.randint(0, len(palette))])
+
+    def update_obstacles(self, dt):
+        if not self.obstacles:
+            return
+        center = np.array(self.boundary_polygon.centroid.coords[0], dtype=float)
+        for obstacle in self.obstacles:
+            pos = obstacle['pos']
+            to_center = center - pos
+            center_heading = math.atan2(to_center[1], to_center[0])
+            dist_to_boundary = self.distance_to_boundary(pos)
+            boundary_gain = np.clip(
+                (self.obstacle_boundary_margin - dist_to_boundary) / max(self.obstacle_boundary_margin, 1e-6),
+                0.0,
+                1.0,
+            )
+            if boundary_gain > 0.0:
+                heading_error = self.wrap_pi(center_heading - obstacle['heading'])
+                obstacle['heading'] = self.wrap_pi(obstacle['heading'] + np.clip(heading_error, -0.5, 0.5) * boundary_gain)
+            else:
+                obstacle['heading'] = self.wrap_pi(obstacle['heading'] + np.random.normal(0.0, 0.035) * math.sqrt(dt))
+
+            velocity = obstacle['speed'] * np.array([math.cos(obstacle['heading']), math.sin(obstacle['heading'])], dtype=float)
+            new_pos = pos + velocity * dt
+            if not self.is_inside(new_pos):
+                obstacle['heading'] = self.wrap_pi(center_heading + np.random.uniform(-0.18, 0.18))
+                norm = max(np.linalg.norm(to_center), 1e-6)
+                new_pos = pos + min(0.4, obstacle['speed'] * dt + 0.05) * to_center / norm
+                if not self.is_inside(new_pos):
+                    new_pos = self.sample_global_position()
+            obstacle['pos'] = new_pos
+            obstacle['yaw'] = self.wrap_pi(obstacle['yaw'] + obstacle['yaw_rate'] * dt)
     
     def run(self):
         dt = 1.0 / 10.0  # 对应10 Hz
         while not rospy.is_shutdown():
             self.update_position(dt)
+            self.update_obstacles(dt)
             
             # 创建并发布PoseStamped消息
             msg = PoseStamped()
@@ -256,6 +358,7 @@ class DynamicTargetGenerator:
             
             self.pose_pub.publish(msg)
             self.publish_mesh_marker(msg)
+            self.publish_obstacle_markers(msg.header.stamp)
             self.rate.sleep()
 
     def publish_mesh_marker(self, pose_msg):
@@ -279,6 +382,49 @@ class DynamicTargetGenerator:
         marker.color.b = float(color[2])
         marker.color.a = float(color[3])
         self.marker_pub.publish(marker)
+
+    def publish_obstacle_markers(self, stamp):
+        marker_array = MarkerArray()
+        active_ids = set()
+        for obstacle in self.obstacles:
+            marker = Marker()
+            marker.header.stamp = stamp
+            marker.header.frame_id = "map"
+            marker.ns = "dynamic_obstacles"
+            marker.id = int(obstacle['id'])
+            active_ids.add(marker.id)
+            marker.action = Marker.ADD
+            if obstacle['shape'] == 'sphere':
+                marker.type = Marker.SPHERE
+            elif obstacle['shape'] == 'cylinder':
+                marker.type = Marker.CYLINDER
+            else:
+                marker.type = Marker.CUBE
+            marker.pose.position.x = float(obstacle['pos'][0])
+            marker.pose.position.y = float(obstacle['pos'][1])
+            marker.pose.position.z = float(obstacle['scale'][2] * 0.5)
+            marker.pose.orientation.z = math.sin(0.5 * obstacle['yaw'])
+            marker.pose.orientation.w = math.cos(0.5 * obstacle['yaw'])
+            marker.scale.x = float(obstacle['scale'][0])
+            marker.scale.y = float(obstacle['scale'][1])
+            marker.scale.z = float(obstacle['scale'][2])
+            color = obstacle['color']
+            marker.color.r = float(color[0])
+            marker.color.g = float(color[1])
+            marker.color.b = float(color[2])
+            marker.color.a = float(color[3])
+            marker_array.markers.append(marker)
+        for marker_id in range(max(self.obstacle_max_marker_id, self.obstacle_count)):
+            if marker_id in active_ids:
+                continue
+            marker = Marker()
+            marker.header.stamp = stamp
+            marker.header.frame_id = "map"
+            marker.ns = "dynamic_obstacles"
+            marker.id = marker_id
+            marker.action = Marker.DELETE
+            marker_array.markers.append(marker)
+        self.obstacle_pub.publish(marker_array)
 
 if __name__ == '__main__':
     try:
