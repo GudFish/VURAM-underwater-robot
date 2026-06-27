@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""
+功能：在边界约束内生成动态目标和障碍物，为规划与感知链路提供仿真场景。
+输入：通过 ROS 参数以及目标、里程计、边界和感知话题接收规划输入。
+输出：发布目标、速度、偏航、障碍物或规划结果，并维护优化器内部状态。
+"""
 import math
 
 import rospy
@@ -9,7 +14,17 @@ from shapely.geometry import Point, Polygon
 from visualization_msgs.msg import Marker, MarkerArray
 
 class DynamicTargetGenerator:
+    """
+    功能：在边界内生成动态目标轨迹及障碍物场景。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('dynamic_target_generator')
         self.robot_odom_topic = rospy.get_param('~robot_odom_topic', '/mavros/local_position/odom')
         self.target_pose_topic = rospy.get_param('~target_pose_topic', '/dynamic_target/pose')
@@ -101,10 +116,20 @@ class DynamicTargetGenerator:
         rospy.loginfo("动态目标生成器已启动，边界内初始位置: (%.2f, %.2f)", self.pos[0], self.pos[1])
 
     def odom_cb(self, msg):
+        """
+        功能：执行 `odom_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.robot_xy = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y], dtype=float)
         self.have_robot_odom = True
 
     def wait_for_robot_odom(self):
+        """
+        功能：等待机器人里程计就绪后再继续初始化流程。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         if not self.init_near_robot:
             return
         start = rospy.Time.now()
@@ -120,6 +145,11 @@ class DynamicTargetGenerator:
             rate.sleep()
 
     def sample_global_position(self):
+        """
+        功能：在允许区域内采样一个全局位置。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         min_x, min_y, max_x, max_y = self.boundary_polygon.bounds
         while not rospy.is_shutdown():
             pos = np.array([np.random.uniform(min_x, max_x), np.random.uniform(min_y, max_y)], dtype=float)
@@ -128,6 +158,11 @@ class DynamicTargetGenerator:
         return np.array([0.0, 0.0], dtype=float)
 
     def sample_initial_position(self):
+        """
+        功能：采样动态目标的初始位置。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         if not self.init_near_robot or not self.have_robot_odom:
             pos = self.sample_global_position()
             rospy.loginfo("[DynamicTarget] global initial target position: (%.2f, %.2f)", pos[0], pos[1])
@@ -160,17 +195,36 @@ class DynamicTargetGenerator:
         return pos
     
     def is_inside(self, point):
-        """检查点是否在边界内部"""
+        """
+        功能：判断给定点是否位于当前边界内部。
+        输入：`point` 为该函数执行所需的输入参数。
+        输出：返回布尔值或状态判定结果。
+        """
         return self.boundary_polygon.contains(Point(point))
 
     @staticmethod
     def wrap_pi(angle):
+        """
+        功能：将输入角度归一化到 [-pi, pi] 区间。
+        输入：`angle` 为该函数执行所需的输入参数。
+        输出：返回归一化后的弧度角。
+        """
         return math.atan2(math.sin(angle), math.cos(angle))
 
     def distance_to_boundary(self, point):
+        """
+        功能：计算给定点到边界的最近距离。
+        输入：`point` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         return self.boundary_polygon.exterior.distance(Point(point))
 
     def pick_new_mode(self):
+        """
+        功能：为动态目标选择新的运动模式或机动状态。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         modes = ['straight', 'turn_left', 'turn_right', 'accelerate', 'decelerate']
         weights = np.array([0.52, 0.12, 0.12, 0.14, 0.10], dtype=float)
         self.maneuver_mode = np.random.choice(modes, p=weights / np.sum(weights))
@@ -194,7 +248,11 @@ class DynamicTargetGenerator:
             self.mode_target_speed = np.random.uniform(self.speed_min, min(self.speed, 0.40))
     
     def update_position(self, dt):
-        """更新位置，使用分模式机动 + 平滑连续转弯/变速模型。"""
+        """
+        功能：根据当前模式推进目标位置与运动状态。
+        输入：`dt` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         center = np.array(self.boundary_polygon.centroid.coords[0], dtype=float)
         to_center = center - self.pos
         center_heading = math.atan2(to_center[1], to_center[0])
@@ -251,6 +309,11 @@ class DynamicTargetGenerator:
         self.pos = new_pos
 
     def create_obstacles(self):
+        """
+        功能：创建用于仿真的障碍物集合。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         obstacles = []
         shapes = [str(item).lower() for item in self.obstacle_shapes]
         shapes = [item for item in shapes if item in ('sphere', 'box', 'cylinder')]
@@ -283,6 +346,11 @@ class DynamicTargetGenerator:
         return obstacles
 
     def sample_obstacle_scale(self, shape, size_min, size_max):
+        """
+        功能：为障碍物采样合适的尺度参数。
+        输入：`shape`、`size_min`、`size_max` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         if shape == 'sphere':
             size = np.random.uniform(size_min, size_max)
             return np.array([size, size, size], dtype=float)
@@ -301,6 +369,11 @@ class DynamicTargetGenerator:
 
     @staticmethod
     def sample_obstacle_color():
+        """
+        功能：生成障碍物可视化颜色。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回采样得到的颜色配置。
+        """
         palette = [
             [0.25, 0.75, 1.0, 0.72],
             [1.0, 0.45, 0.22, 0.72],
@@ -310,6 +383,11 @@ class DynamicTargetGenerator:
         return list(palette[np.random.randint(0, len(palette))])
 
     def update_obstacles(self, dt):
+        """
+        功能：更新障碍物的运行状态或可视化内容。
+        输入：`dt` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         if not self.obstacles:
             return
         center = np.array(self.boundary_polygon.centroid.coords[0], dtype=float)
@@ -341,6 +419,11 @@ class DynamicTargetGenerator:
             obstacle['yaw'] = self.wrap_pi(obstacle['yaw'] + obstacle['yaw_rate'] * dt)
     
     def run(self):
+        """
+        功能：执行 `run` 对应的核心处理逻辑。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；持续进入事件循环并保持节点运行。
+        """
         dt = 1.0 / 10.0  # 对应10 Hz
         while not rospy.is_shutdown():
             self.update_position(dt)
@@ -362,6 +445,11 @@ class DynamicTargetGenerator:
             self.rate.sleep()
 
     def publish_mesh_marker(self, pose_msg):
+        """
+        功能：发布目标网格可视化标记。
+        输入：`pose_msg` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         marker = Marker()
         marker.header = pose_msg.header
         marker.ns = "dynamic_target"
@@ -384,6 +472,11 @@ class DynamicTargetGenerator:
         self.marker_pub.publish(marker)
 
     def publish_obstacle_markers(self, stamp):
+        """
+        功能：发布障碍物集合的可视化标记。
+        输入：`stamp` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         marker_array = MarkerArray()
         active_ids = set()
         for obstacle in self.obstacles:

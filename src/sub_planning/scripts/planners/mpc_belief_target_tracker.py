@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+功能：结合目标置信度、声学观测与边界约束，执行 belief-aware MPC 跟踪控制。
+输入：通过 ROS 参数以及目标、里程计、边界和感知话题接收规划输入。
+输出：发布目标、速度、偏航、障碍物或规划结果，并维护优化器内部状态。
+"""
 import sys
 from pathlib import Path
 import math
@@ -18,11 +23,26 @@ from utils.boundary_constraints import load_boundary_halfspaces
 
 
 def wrap_pi(angle):
+    """
+    功能：将输入角度归一化到 [-pi, pi] 区间。
+    输入：`angle` 为该函数执行所需的输入参数。
+    输出：返回归一化后的弧度角。
+    """
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
 
 class BeliefAwareMPCTracker:
+    """
+    功能：结合目标 belief、声呐候选与边界约束执行鲁棒 MPC 跟踪。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('mpc_belief_target_tracker', anonymous=True)
 
         self.odom_topic = rospy.get_param('~odom_topic', '/mavros/local_position/odom')
@@ -178,14 +198,29 @@ class BeliefAwareMPCTracker:
 
     @staticmethod
     def _clip(val, vmin, vmax):
+        """
+        功能：对数值进行上下限裁剪，避免控制量或中间变量超界。
+        输入：`val`、`vmin`、`vmax` 为该函数执行所需的输入参数。
+        输出：返回裁剪后的数值。
+        """
         return max(vmin, min(vmax, val))
 
     def belief_scalar_uncertainty(self):
+        """
+        功能：从 belief 消息中提取可用于控制的标量不确定度。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         pos_unc = max(0.0, self.target_cov_xx + self.target_cov_yy)
         vel_unc = max(0.0, self.target_cov_vxvx + self.target_cov_vyvy)
         return self.unc_pos_gain * pos_unc + self.unc_vel_gain * vel_unc
 
     def _refresh_boundary_constraints(self):
+        """
+        功能：刷新边界半空间约束缓存。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         if self.boundary_ready:
             return True
 
@@ -230,6 +265,11 @@ class BeliefAwareMPCTracker:
         return True
 
     def _build_nlp(self):
+        """
+        功能：构建 MPC 或优化器所需的非线性规划模型。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         u_cmd = ca.SX.sym('U', self.N)
         v_cmd = ca.SX.sym('V', self.N)
         yaw_cmd = ca.SX.sym('Y', self.N)
@@ -475,6 +515,11 @@ class BeliefAwareMPCTracker:
         self.ubx = ([self.u_max] * self.N) + ([self.v_max] * self.N) + ([math.pi] * self.N)
 
     def odom_cb(self, msg):
+        """
+        功能：执行 `odom_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.x = msg.pose.pose.position.x
         self.y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
@@ -491,6 +536,11 @@ class BeliefAwareMPCTracker:
         self.have_odom = True
 
     def belief_cb(self, msg):
+        """
+        功能：处理目标 belief 消息并更新内部估计状态。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.target_x = msg.pose.pose.position.x
         self.target_y = msg.pose.pose.position.y
         self.target_vx = msg.twist.twist.linear.x
@@ -504,10 +554,20 @@ class BeliefAwareMPCTracker:
         self.have_belief = True
 
     def bearing_cb(self, msg):
+        """
+        功能：处理方位消息并更新当前方位缓存。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.latest_bearing = wrap_pi(float(msg.data))
         self.latest_bearing_stamp = rospy.Time.now()
 
     def fresh_bearing(self):
+        """
+        功能：判断声学方位观测是否仍然有效。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回布尔值或状态判定结果。
+        """
         if self.latest_bearing is None or self.latest_bearing_stamp is None:
             return None
         age = (rospy.Time.now() - self.latest_bearing_stamp).to_sec()
@@ -516,6 +576,11 @@ class BeliefAwareMPCTracker:
         return self.latest_bearing
 
     def scene_candidates_cb(self, msg):
+        """
+        功能：处理场景候选量测消息并更新候选缓存。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if not self.have_odom or len(msg.data) < 1:
             return
 
@@ -554,12 +619,22 @@ class BeliefAwareMPCTracker:
         self.scene_candidates_stamp = rospy.Time.now()
 
     def active_scene_is_fresh(self):
+        """
+        功能：判断当前场景候选缓存是否仍然新鲜。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回布尔值或状态判定结果。
+        """
         if not self.active_scene_enable or self.scene_candidates_stamp is None:
             return False
         age = (rospy.Time.now() - self.scene_candidates_stamp).to_sec()
         return age <= max(self.active_scene_timeout, 0.0)
 
     def active_scene_parameters(self):
+        """
+        功能：提取当前激活场景候选的控制参数。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         params = []
         if self.active_scene_is_fresh():
             total_weight = sum(item['weight'] for item in self.scene_candidates_world)
@@ -578,6 +653,11 @@ class BeliefAwareMPCTracker:
         return params
 
     def _shift_warm_start(self):
+        """
+        功能：平移 warm start 序列以加速下一次优化求解。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         if self.N <= 1:
             return
         self.U_init = self.U_init[1:] + [self.U_init[-1]]
@@ -585,6 +665,11 @@ class BeliefAwareMPCTracker:
         self.YAW_init = self.YAW_init[1:] + [self.YAW_init[-1]]
 
     def solve_mpc(self):
+        """
+        功能：根据当前状态求解一次 MPC 控制问题。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回当前求解得到的控制结果或求解状态。
+        """
         dx = self.target_x - self.x
         dy = self.target_y - self.y
         dist = math.hypot(dx, dy)
@@ -649,6 +734,11 @@ class BeliefAwareMPCTracker:
         return self.U_init[0], self.V_init[0], self.YAW_init[0], False, sigma0
 
     def publish_cmd(self, vx_body, vy_body, yaw):
+        """
+        功能：发布求解得到的速度与偏航控制命令。
+        输入：`vx_body`、`vy_body`、`yaw` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         vel_msg = Twist()
         vel_msg.linear.x = vx_body
         vel_msg.linear.y = vy_body
@@ -659,6 +749,11 @@ class BeliefAwareMPCTracker:
         self.yaw_pub.publish(yaw_msg)
 
     def publish_search_cmd(self):
+        """
+        功能：发布搜索模式下的控制命令。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         yaw_cmd = wrap_pi(self.last_cmd_yaw + self.search_yaw_rate / max(self.control_rate, 1e-3))
         vx_cmd = self._clip(self.search_forward_speed, -self.u_max, self.u_max)
         self.last_cmd_u = vx_cmd
@@ -667,6 +762,11 @@ class BeliefAwareMPCTracker:
         self.publish_cmd(vx_cmd, 0.0, yaw_cmd)
 
     def publish_bearing_search_cmd(self, bearing):
+        """
+        功能：发布结合方位信息的搜索控制命令。
+        输入：`bearing` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         world_bearing = wrap_pi(self.psi + bearing)
         forward_scale = max(
             self.bearing_search_forward_min_scale,
@@ -685,6 +785,11 @@ class BeliefAwareMPCTracker:
         self.publish_cmd(vx_cmd, vy_cmd, world_bearing)
 
     def run(self):
+        """
+        功能：执行 `run` 对应的核心处理逻辑。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；持续进入事件循环并保持节点运行。
+        """
         rate = rospy.Rate(self.control_rate)
         while not rospy.is_shutdown():
             if not self.have_odom:

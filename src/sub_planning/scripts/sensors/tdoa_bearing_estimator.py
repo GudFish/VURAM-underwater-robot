@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+功能：根据 TDOA 观测和阵列几何关系估计目标声学方位。
+输入：通过 ROS 参数以及里程计、目标、图像或场景话题接收传感仿真与检测输入。
+输出：发布仿真量测、候选目标或图像数据，并维护传感器内部缓存。
+"""
 import math
 
 import numpy as np
@@ -10,7 +15,17 @@ from std_msgs.msg import Float32, Float32MultiArray
 
 
 class TDOABearingEstimator:
+    """
+    功能：根据 TDOA 量测估计目标相对方位并输出调试信息。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('tdoa_bearing_estimator', anonymous=True)
 
         self.odom_topic = rospy.get_param('~odom_topic', '/mavros/local_position/odom')
@@ -34,6 +49,11 @@ class TDOABearingEstimator:
         rospy.loginfo('[TDOABearing] started. tdoa=%s bearing=%s', self.tdoa_topic, self.bearing_topic)
 
     def load_beacons(self):
+        """
+        功能：加载并转换阵列基元坐标配置。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         default = [[0.65, 0.60], [-0.65, 0.60], [0.65, -0.60], [-0.65, -0.60]]
         beacons = rospy.get_param('~beacons_body', default)
         if len(beacons) != 4:
@@ -42,6 +62,11 @@ class TDOABearingEstimator:
         return np.array([[float(v[0]), float(v[1])] for v in beacons], dtype=float)
 
     def odom_cb(self, msg):
+        """
+        功能：执行 `odom_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         q = msg.pose.pose.orientation
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
@@ -49,6 +74,11 @@ class TDOABearingEstimator:
         self.have_odom = True
 
     def tdoa_cb(self, msg):
+        """
+        功能：执行 `tdoa_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if len(msg.data) != len(self.beacons_body) - 1:
             rospy.logwarn_throttle(2.0, '[TDOABearing] expected %d TDOA values, got %d', len(self.beacons_body) - 1, len(msg.data))
             return

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""
+功能：将 GPS 边界转换为 ENU 边界与可视化标记，并生成仿真边界曲线。
+输入：通过 ROS 参数以及状态、边界、图像或置信度话题接收可视化输入。
+输出：发布 RViz 标记、TF 或显示结果，辅助观察系统运行状态。
+"""
 import math
 import rospy
 from mavros_msgs.msg import HomePosition
@@ -10,7 +15,17 @@ from scipy.spatial import ConvexHull
 from scipy.interpolate import splprep, splev
 
 class BoundaryLoader:
+    """
+    功能：将边界点转换为规划边界、仿真边界及 RViz 标记。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('boundary_loader')
 
         # 1. 读取私有参数 ~gps_points
@@ -74,13 +89,19 @@ class BoundaryLoader:
         rospy.spin()
 
     def home_cb(self, msg):
+        """
+        功能：处理飞控 home 位置消息并缓存参考原点。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if self.home_position is None:
             self.home_position = msg
 
     def compute_convex_hull(self, points):
         """
-        计算二维点的凸包，返回按逆时针顺序排列的顶点列表。
-        如果点数少于3，则直接返回原列表。
+        功能：计算边界点的二维凸包顺序。
+        输入：`points` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
         """
         if len(points) < 3:
             rospy.logwarn("Less than 3 points, cannot compute convex hull. Returning original order.")
@@ -103,6 +124,11 @@ class BoundaryLoader:
 
     @staticmethod
     def polygon_area(points_xy):
+        """
+        功能：计算二维多边形面积。
+        输入：`points_xy` 为该函数执行所需的输入参数。
+        输出：返回多边形面积值。
+        """
         area = 0.0
         num = len(points_xy)
         for idx in range(num):
@@ -112,6 +138,11 @@ class BoundaryLoader:
         return 0.5 * area
 
     def outward_offset_polygon(self, points_xy, margin):
+        """
+        功能：对闭合多边形做向外偏移。
+        输入：`points_xy`、`margin` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         pts = np.array(points_xy, dtype=float)
         if len(pts) < 3:
             return pts
@@ -152,6 +183,11 @@ class BoundaryLoader:
         return np.array(expanded, dtype=float)
 
     def smooth_closed_polygon(self, points_xy):
+        """
+        功能：对闭合多边形边界做平滑插值。
+        输入：`points_xy` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         pts = np.array(points_xy, dtype=float)
         if len(pts) < 4:
             return pts
@@ -167,6 +203,11 @@ class BoundaryLoader:
 
     @staticmethod
     def ray_segment_intersection(origin, direction, p0, p1):
+        """
+        功能：计算射线与线段的交点参数。
+        输入：`origin`、`direction`、`p0`、`p1` 为该函数执行所需的输入参数。
+        输出：返回交点参数；若不存在交点则返回空值。
+        """
         ox, oy = origin
         dx, dy = direction
         sx = p1[0] - p0[0]
@@ -183,6 +224,11 @@ class BoundaryLoader:
         return None
 
     def polygon_support_radius(self, center, direction, plan_xy):
+        """
+        功能：计算指定方向上多边形边界的支撑半径。
+        输入：`center`、`direction`、`plan_xy` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         best = None
         count = len(plan_xy)
         for idx in range(count):
@@ -194,6 +240,11 @@ class BoundaryLoader:
         return best
 
     def shoreline_profile(self, angles, plan_xy):
+        """
+        功能：生成用于仿真边界扰动的轮廓曲线。
+        输入：`angles`、`plan_xy` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         seed = float(np.sum(plan_xy[:, 0] * 0.173 + plan_xy[:, 1] * 0.297))
         phase1 = math.fmod(abs(seed) * 0.37, 2.0 * math.pi)
         phase2 = math.fmod(abs(seed) * 0.63 + 0.9, 2.0 * math.pi)
@@ -216,6 +267,11 @@ class BoundaryLoader:
         return (profile - pmin) / (pmax - pmin)
 
     def build_sim_boundary(self, ordered_enu):
+        """
+        功能：根据规划边界构造平滑的仿真边界。
+        输入：`ordered_enu` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         plan_xy = np.array([[pt[0], pt[1]] for pt in ordered_enu], dtype=float)
         if len(plan_xy) < 3:
             return ordered_enu
@@ -253,6 +309,11 @@ class BoundaryLoader:
         return sim_boundary
 
     def create_boundary_marker(self, namespace, marker_id, width, rgba, enu_points):
+        """
+        功能：创建单个边界可视化 Marker。
+        输入：`namespace`、`marker_id`、`width`、`rgba`、`enu_points` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         marker = Marker()
         marker.header.frame_id = "map"
         marker.header.stamp = rospy.Time.now()
@@ -275,6 +336,11 @@ class BoundaryLoader:
         return marker
 
     def publish_boundary_markers(self, plan_enu_points, sim_enu_points):
+        """
+        功能：发布规划边界与仿真边界标记。
+        输入：`plan_enu_points`、`sim_enu_points` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.plan_marker = self.create_boundary_marker(
             'boundary_plan',
             0,
@@ -295,6 +361,11 @@ class BoundaryLoader:
         rospy.loginfo("Plan and simulation boundary markers published to /boundary_loader/visualization")
 
     def republish_boundary_markers(self, _event):
+        """
+        功能：定时重新发布边界标记以保持可视化存在。
+        输入：`_event` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         if self.plan_marker is None or self.sim_marker is None:
             return
         stamp = rospy.Time.now()

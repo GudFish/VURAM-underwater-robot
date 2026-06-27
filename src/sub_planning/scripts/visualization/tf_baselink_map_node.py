@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""
+功能：广播 map 到 base_link 的 TF 变换，并支持对姿态方向做固定修正。
+输入：通过 ROS 参数以及状态、边界、图像或置信度话题接收可视化输入。
+输出：发布 RViz 标记、TF 或显示结果，辅助观察系统运行状态。
+"""
 import rospy
 import tf2_ros
 import tf.transformations as tf_trans
@@ -6,7 +11,17 @@ from geometry_msgs.msg import TransformStamped, PoseStamped
 from nav_msgs.msg import Odometry  # 备用：也支持 Odometry 话题
 
 class TFBroadcasterNode:
+    """
+    功能：根据位姿消息广播 TF 变换并执行固定姿态修正。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('mavros_tf_broadcaster')
         self.br = tf2_ros.TransformBroadcaster()
         
@@ -29,11 +44,20 @@ class TFBroadcasterNode:
         # self.odom_sub = rospy.Subscriber('/mavros/local_position/odom', Odometry, self.odom_callback)
 
     def quat_multiply(self, q1, q2):
-        """四元数乘法：q1 * q2，返回 [x, y, z, w]"""
+        """
+        功能：执行两个四元数的乘法。
+        输入：`q1`、`q2` 为该函数执行所需的输入参数。
+        输出：返回四元数乘法结果。
+        """
         return tf_trans.quaternion_multiply(q1, q2)
 
     def pose_callback(self, msg):
         # 接收到的原始四元数 (x, y, z, w)
+        """
+        功能：处理位姿消息并广播对应 TF。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         orig_quat = [msg.pose.orientation.x,
                      msg.pose.orientation.y,
                      msg.pose.orientation.z,
@@ -63,6 +87,11 @@ class TFBroadcasterNode:
     # 可选：如果使用 Odometry 话题
     def odom_callback(self, msg):
         # 类似 pose_callback，从 msg.pose.pose 中提取位姿
+        """
+        功能：处理里程计消息并广播对应 TF。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         pass
 
 if __name__ == '__main__':

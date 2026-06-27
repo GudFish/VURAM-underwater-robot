@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+功能：根据目标位姿和里程计信息执行位置闭环控制，发布机体系速度与渐进偏航命令。
+输入：通过 ROS 参数、状态话题、里程计话题和控制输入话题接收运行配置与控制量。
+输出：发布速度、姿态或位置控制相关消息，并维护控制器内部状态。
+"""
 import sys
 from pathlib import Path
 
@@ -17,7 +22,17 @@ from geometry_msgs.msg import Twist, PoseStamped
 from std_msgs.msg import Float32
 
 class PositionController:
+    """
+    功能：基于目标位姿和当前里程计执行位置与偏航闭环控制。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('position_controller', anonymous=True)
 
         # 订阅 RViz 发布的 2D Nav Goal 目标点
@@ -77,6 +92,11 @@ class PositionController:
         rospy.loginfo("Position Controller started (Body-frame velocity output).")
 
     def odom_cb(self, msg):
+        """
+        功能：执行 `odom_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         px = msg.pose.pose.position.x
         py = msg.pose.pose.position.y
         pz = msg.pose.pose.position.z
@@ -91,7 +111,11 @@ class PositionController:
         self.current_twist = np.array([vx, vy, vz, 0.0])
 
     def target_pose_cb(self, msg):
-        """收到目标位姿时，更新最终目标，并初始化渐进目标为当前实际偏航角"""
+        """
+        功能：执行 `target_pose_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.target_x = msg.pose.position.x
         self.target_y = msg.pose.position.y
         self.target_z = msg.pose.position.z
@@ -107,6 +131,11 @@ class PositionController:
         # rospy.loginfo(f"Target received: ({self.target_x:.2f}, {self.target_y:.2f}, {self.target_z:.2f}), final yaw={self.target_yaw:.2f}")
 
     def control_loop(self, event):
+        """
+        功能：执行 `control_loop` 对应的核心处理逻辑。
+        输入：`event` 为 ROS 定时器事件；运行时还依赖对象内部状态与缓存数据。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if self.current_pose is None:
             rospy.logwarn_throttle(5, "No odometry yet.")
             return
@@ -163,6 +192,11 @@ class PositionController:
                               f"Current Yaw Cmd: {self.current_target_yaw:.2f}, Final Yaw: {self.target_yaw:.2f}")
 
     def pid_control(self, axis, error, dt):
+        """
+        功能：执行 `pid_control` 对应的核心处理逻辑。
+        输入：`axis`、`error`、`dt` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         if axis == 'x':
             kp, ki, kd = self.kp_x, self.ki_x, self.kd_x
             integral = self.integral_x
@@ -211,6 +245,11 @@ class PositionController:
         return output
 
     def run(self):
+        """
+        功能：执行 `run` 对应的核心处理逻辑。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；持续进入事件循环并保持节点运行。
+        """
         rospy.spin()
 
 if __name__ == '__main__':

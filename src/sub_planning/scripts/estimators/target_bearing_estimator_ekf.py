@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+功能：融合声学方位、前视声呐与里程计信息，使用 EKF 输出动态目标状态估计。
+输入：通过 ROS 参数以及里程计、方位、声呐等观测话题接收估计所需数据。
+输出：发布目标位姿、速度、belief 或调试消息，并维护估计器状态。
+"""
 import sys
 from pathlib import Path
 import math
@@ -19,7 +24,17 @@ from models.bearing_only_ekf import BearingOnlyCVEKF2D
 
 
 class TargetBearingEstimatorEKF:
+    """
+    功能：管理目标 EKF 的初始化、预测、更新以及估计结果发布流程。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('target_bearing_estimator_ekf', anonymous=True)
 
         self.robot_odom_topic = rospy.get_param('~robot_odom_topic', '/mavros/local_position/odom')
@@ -99,9 +114,19 @@ class TargetBearingEstimatorEKF:
 
     @staticmethod
     def wrap_pi(angle):
+        """
+        功能：将输入角度归一化到 [-pi, pi] 区间。
+        输入：`angle` 为该函数执行所需的输入参数。
+        输出：返回归一化后的弧度角。
+        """
         return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
     def create_filter(self):
+        """
+        功能：创建并返回当前估计器所使用的 EKF 实例。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回初始化好的 EKF 实例。
+        """
         return BearingOnlyCVEKF2D(
             process_noise_diag=self.process_noise_diag,
             bearing_noise_var=self.bearing_noise_std ** 2,
@@ -109,9 +134,19 @@ class TargetBearingEstimatorEKF:
         )
 
     def ekf_initialized(self):
+        """
+        功能：检查 EKF 是否已经完成状态初始化。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回布尔值或状态判定结果。
+        """
         return self.ekf.initialized
 
     def reset_estimator(self, reason):
+        """
+        功能：清空缓存观测并重置估计器到初始状态。
+        输入：`reason` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         self.last_stamp = None
         self.pending_bearing = None
         self.pending_sonar = None
@@ -122,6 +157,11 @@ class TargetBearingEstimatorEKF:
         rospy.loginfo('[TargetBearingEKF] estimator reset: %s', reason)
 
     def state_cb(self, msg):
+        """
+        功能：执行 `state_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         armed_rising = (not self.last_armed) and msg.armed
         armed_falling = self.last_armed and (not msg.armed)
         self.current_state = msg
@@ -135,6 +175,11 @@ class TargetBearingEstimatorEKF:
         self.last_armed = msg.armed
 
     def odom_cb(self, msg):
+        """
+        功能：执行 `odom_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.robot_x = msg.pose.pose.position.x
         self.robot_y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
@@ -146,11 +191,21 @@ class TargetBearingEstimatorEKF:
             self.initialize_from_prior()
 
     def rotate_body_to_world(self, bx, by):
+        """
+        功能：将机体系二维向量旋转到世界坐标系。
+        输入：`bx`、`by` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         c = math.cos(self.robot_yaw)
         s = math.sin(self.robot_yaw)
         return c * bx - s * by, s * bx + c * by
 
     def initialize_from_prior(self):
+        """
+        功能：使用先验状态均值和协方差完成目标初始化。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         rel_x, rel_y = self.rotate_body_to_world(self.init_mean_np[0], self.init_mean_np[1])
         vel_x, vel_y = self.rotate_body_to_world(self.init_mean_np[2], self.init_mean_np[3])
         state = np.array([self.robot_x + rel_x, self.robot_y + rel_y, vel_x, vel_y], dtype=float)
@@ -158,6 +213,11 @@ class TargetBearingEstimatorEKF:
         rospy.loginfo('[TargetBearingEKF] relative prior initialized: (%.2f, %.2f, %.2f, %.2f)', state[0], state[1], state[2], state[3])
 
     def initialize_from_bearing(self, bearing):
+        """
+        功能：根据首个方位观测在世界系中初始化目标状态。
+        输入：`bearing` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         world_bearing = self.wrap_pi(self.robot_yaw + float(bearing))
         ux = math.cos(world_bearing)
         uy = math.sin(world_bearing)
@@ -190,6 +250,11 @@ class TargetBearingEstimatorEKF:
         )
 
     def initialize_from_sonar(self, measured_range, measured_bearing):
+        """
+        功能：根据声呐距离和方位观测初始化目标状态。
+        输入：`measured_range`、`measured_bearing` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         world_bearing = self.wrap_pi(self.robot_yaw + float(measured_bearing))
         ux = math.cos(world_bearing)
         uy = math.sin(world_bearing)
@@ -225,6 +290,11 @@ class TargetBearingEstimatorEKF:
         )
 
     def bearing_cb(self, msg):
+        """
+        功能：处理方位消息并更新当前方位缓存。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if not self.current_state.armed or not self.have_robot:
             return
 
@@ -250,6 +320,11 @@ class TargetBearingEstimatorEKF:
         }
 
     def sonar_cb(self, msg):
+        """
+        功能：执行 `sonar_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if not self.current_state.armed or not self.have_robot:
             return
         if len(msg.data) < 3:
@@ -278,6 +353,11 @@ class TargetBearingEstimatorEKF:
             self.pending_sonar = None
 
     def sonar_candidates_cb(self, msg):
+        """
+        功能：执行 `sonar_candidates_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if not self.current_state.armed or not self.have_robot:
             return
         if len(msg.data) < 1:
@@ -322,18 +402,33 @@ class TargetBearingEstimatorEKF:
                 self.try_initialize_from_candidates(self.pending_bearing['bearing'])
 
     def measurement_is_fresh(self, stamp, timeout):
+        """
+        功能：判断缓存量测是否仍处于有效时间窗口内。
+        输入：`stamp`、`timeout` 为该函数执行所需的输入参数。
+        输出：返回布尔值或状态判定结果。
+        """
         if stamp is None:
             return False
         age = (rospy.Time.now() - stamp).to_sec()
         return age <= max(timeout, 0.0)
 
     def candidate_bearing_gate(self, candidates, bearing):
+        """
+        功能：判断候选量测是否满足与声学方位一致的门限条件。
+        输入：`candidates`、`bearing` 为该函数执行所需的输入参数。
+        输出：返回布尔值或状态判定结果。
+        """
         if bearing is None:
             return list(candidates)
         gate = math.radians(self.bearing_candidate_gate_deg)
         return [item for item in candidates if abs(self.wrap_pi(item['bearing'] - bearing)) <= gate]
 
     def try_initialize_from_candidates(self, bearing):
+        """
+        功能：尝试利用候选量测集合完成目标初始化。
+        输入：`bearing` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         if self.pending_sonar_candidates is None:
             return False
         if not self.measurement_is_fresh(self.pending_sonar_candidates['stamp'], self.sonar_candidate_timeout):
@@ -398,6 +493,11 @@ class TargetBearingEstimatorEKF:
         return True
 
     def timer_cb(self, event):
+        """
+        功能：执行 `timer_cb` 对应的核心处理逻辑。
+        输入：`event` 为 ROS 定时器事件；运行时还依赖对象内部状态与缓存数据。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if not self.have_robot:
             rospy.logwarn_throttle(2.0, '[TargetBearingEKF] waiting for robot odom...')
             return
@@ -550,6 +650,11 @@ class TargetBearingEstimatorEKF:
         )
 
     def publish_pdaf_debug(self, stats, acoustic_bearing):
+        """
+        功能：发布 PDAF 关联过程的调试统计信息。
+        输入：`stats`、`acoustic_bearing` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         msg = Float32MultiArray()
         msg.data = [
             float(stats.get('num_candidates', 0)),
@@ -567,6 +672,11 @@ class TargetBearingEstimatorEKF:
         self.pdaf_debug_pub.publish(msg)
 
     def current_relative_range(self):
+        """
+        功能：计算当前目标估计相对机器人位置的距离。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回目标估计到机器人之间的相对距离。
+        """
         if not self.ekf_initialized():
             return 0.0
         dx = self.ekf.x[0] - self.robot_x
@@ -574,6 +684,11 @@ class TargetBearingEstimatorEKF:
         return float(math.hypot(dx, dy))
 
     def register_pdaf_miss(self):
+        """
+        功能：记录一次 PDAF 未关联事件并更新丢失状态。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         self.consecutive_pdaf_misses += 1
         if (
             self.consecutive_pdaf_misses >= max(self.lost_track_missed_updates, 1)
@@ -582,6 +697,11 @@ class TargetBearingEstimatorEKF:
             self.track_lost = True
 
     def should_reacquire_from_candidates(self, candidates, acoustic_gate):
+        """
+        功能：判断当前是否应该利用候选量测重新捕获目标。
+        输入：`candidates`、`acoustic_gate` 为该函数执行所需的输入参数。
+        输出：返回布尔值或状态判定结果。
+        """
         if not self.reacquire_when_out_of_range:
             return False
         if acoustic_gate is None or not candidates:
@@ -591,6 +711,11 @@ class TargetBearingEstimatorEKF:
         return True
 
     def constrain_ekf_state(self):
+        """
+        功能：对 EKF 状态施加速度或距离等有效性约束。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         if not self.ekf_initialized():
             return
 
@@ -612,6 +737,11 @@ class TargetBearingEstimatorEKF:
         self.ekf.P = 0.5 * (self.ekf.P + self.ekf.P.T)
 
     def publish_estimate(self, stamp, acoustic_innovation, acoustic_nis, sonar_range_innovation, sonar_bearing_innovation, sonar_nis):
+        """
+        功能：发布当前估计得到的目标位姿、速度或 belief 结果。
+        输入：`stamp`、`acoustic_innovation`、`acoustic_nis`、`sonar_range_innovation`、`sonar_bearing_innovation`、`sonar_nis` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         state = self.ekf.x.copy()
         belief_cov = self.ekf.P.copy()
         vx = state[2]

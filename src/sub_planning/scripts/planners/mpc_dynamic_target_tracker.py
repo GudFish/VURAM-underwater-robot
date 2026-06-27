@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+功能：面向动态目标执行二维 MPC 跟踪控制，并考虑场地边界约束。
+输入：通过 ROS 参数以及目标、里程计、边界和感知话题接收规划输入。
+输出：发布目标、速度、偏航、障碍物或规划结果，并维护优化器内部状态。
+"""
 import sys
 from pathlib import Path
 import math
@@ -18,11 +23,26 @@ from utils.boundary_constraints import load_boundary_halfspaces
 
 
 def wrap_pi(angle):
+    """
+    功能：将输入角度归一化到 [-pi, pi] 区间。
+    输入：`angle` 为该函数执行所需的输入参数。
+    输出：返回归一化后的弧度角。
+    """
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
 
 class DynamicTargetMPCTracker:
+    """
+    功能：针对动态目标执行边界受限的 MPC 跟踪控制。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('mpc_dynamic_target_tracker', anonymous=True)
 
         self.odom_topic = rospy.get_param('~odom_topic', '/mavros/local_position/odom')
@@ -130,9 +150,19 @@ class DynamicTargetMPCTracker:
 
     @staticmethod
     def _clip(val, vmin, vmax):
+        """
+        功能：对数值进行上下限裁剪，避免控制量或中间变量超界。
+        输入：`val`、`vmin`、`vmax` 为该函数执行所需的输入参数。
+        输出：返回裁剪后的数值。
+        """
         return max(vmin, min(vmax, val))
 
     def _refresh_boundary_constraints(self):
+        """
+        功能：刷新边界半空间约束缓存。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         if self.boundary_ready:
             return True
 
@@ -177,6 +207,11 @@ class DynamicTargetMPCTracker:
         return True
 
     def _build_nlp(self):
+        """
+        功能：构建 MPC 或优化器所需的非线性规划模型。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         u_cmd = ca.SX.sym('U', self.N)
         v_cmd = ca.SX.sym('V', self.N)
         yaw_cmd = ca.SX.sym('Y', self.N)
@@ -353,6 +388,11 @@ class DynamicTargetMPCTracker:
         self.ubx = ([self.u_max] * self.N) + ([self.v_max] * self.N) + ([math.pi] * self.N)
 
     def odom_cb(self, msg):
+        """
+        功能：执行 `odom_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.x = msg.pose.pose.position.x
         self.y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
@@ -369,6 +409,11 @@ class DynamicTargetMPCTracker:
         self.have_odom = True
 
     def target_cb(self, msg):
+        """
+        功能：处理目标位姿消息并更新目标状态缓存。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.target_x = msg.pose.position.x
         self.target_y = msg.pose.position.y
         q = msg.pose.orientation
@@ -380,6 +425,11 @@ class DynamicTargetMPCTracker:
         self.have_target = True
 
     def _shift_warm_start(self):
+        """
+        功能：平移 warm start 序列以加速下一次优化求解。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         if self.N <= 1:
             return
         self.U_init = self.U_init[1:] + [self.U_init[-1]]
@@ -387,6 +437,11 @@ class DynamicTargetMPCTracker:
         self.YAW_init = self.YAW_init[1:] + [self.YAW_init[-1]]
 
     def solve_mpc(self):
+        """
+        功能：根据当前状态求解一次 MPC 控制问题。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回当前求解得到的控制结果或求解状态。
+        """
         dx = self.target_x - self.x
         dy = self.target_y - self.y
         dist = math.hypot(dx, dy)
@@ -446,6 +501,11 @@ class DynamicTargetMPCTracker:
         return self.U_init[0], self.V_init[0], self.YAW_init[0], False
 
     def publish_cmd(self, vx_body, vy_body, yaw):
+        """
+        功能：发布求解得到的速度与偏航控制命令。
+        输入：`vx_body`、`vy_body`、`yaw` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         vel_msg = Twist()
         vel_msg.linear.x = vx_body
         vel_msg.linear.y = vy_body
@@ -456,6 +516,11 @@ class DynamicTargetMPCTracker:
         self.yaw_pub.publish(yaw_msg)
 
     def run(self):
+        """
+        功能：执行 `run` 对应的核心处理逻辑。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；持续进入事件循环并保持节点运行。
+        """
         rate = rospy.Rate(self.control_rate)
         while not rospy.is_shutdown():
             if not self.have_odom:

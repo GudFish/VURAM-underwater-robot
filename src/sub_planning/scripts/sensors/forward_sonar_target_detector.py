@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+功能：从前视声呐图像中提取目标候选并输出供跟踪器使用的量测结果。
+输入：通过 ROS 参数以及里程计、目标、图像或场景话题接收传感仿真与检测输入。
+输出：发布仿真量测、候选目标或图像数据，并维护传感器内部缓存。
+"""
 import math
 
 import numpy as np
@@ -15,7 +20,17 @@ except ImportError:
 
 
 class ForwardSonarTargetDetector:
+    """
+    功能：对前视声呐图像进行阈值分割、候选筛选和量测发布。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('forward_sonar_target_detector', anonymous=True)
 
         self.image_topic = rospy.get_param('~image_topic', '/forward_sonar/image')
@@ -89,13 +104,28 @@ class ForwardSonarTargetDetector:
 
     @staticmethod
     def wrap_pi(angle):
+        """
+        功能：将输入角度归一化到 [-pi, pi] 区间。
+        输入：`angle` 为该函数执行所需的输入参数。
+        输出：返回归一化后的弧度角。
+        """
         return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
     def bearing_cb(self, msg):
+        """
+        功能：处理方位消息并更新当前方位缓存。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.latest_bearing = self.wrap_pi(float(msg.data))
         self.latest_bearing_stamp = rospy.Time.now()
 
     def image_cb(self, msg):
+        """
+        功能：处理图像消息并执行检测或显示逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if msg.encoding not in ('mono8', '8UC1'):
             rospy.logwarn_throttle(2.0, '[ForwardSonarDetector] unsupported encoding: %s', msg.encoding)
             return
@@ -166,6 +196,11 @@ class ForwardSonarTargetDetector:
         self.debug_pub.publish(debug_msg)
 
     def valid_guidance_bearing(self, log_warnings=True):
+        """
+        功能：检查当前声学方位引导是否存在且有效。
+        输入：`log_warnings` 为该函数执行所需的输入参数。
+        输出：返回布尔值或状态判定结果。
+        """
         if self.latest_bearing is None or self.latest_bearing_stamp is None:
             if log_warnings:
                 rospy.logwarn_throttle(2.0, '[ForwardSonarDetector] waiting for acoustic bearing guidance.')
@@ -190,11 +225,21 @@ class ForwardSonarTargetDetector:
         return self.latest_bearing
 
     def build_search_mask(self, height, width, footprint_mask, bearing):
+        """
+        功能：构建方位引导下的搜索区域掩膜。
+        输入：`height`、`width`、`footprint_mask`、`bearing` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         if bearing is None:
             return footprint_mask
         return footprint_mask & self.bearing_gate_mask(height, width, bearing, self.bearing_candidate_gate_deg)
 
     def build_detection_binary(self, blurred, mask, global_threshold):
+        """
+        功能：根据全局或局部阈值生成检测二值图。
+        输入：`blurred`、`mask`、`global_threshold` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         binary = np.zeros_like(blurred, dtype=np.uint8)
         if not self.use_local_threshold:
             binary[(blurred >= global_threshold) & mask] = 255
@@ -216,6 +261,11 @@ class ForwardSonarTargetDetector:
         return binary, threshold_map
 
     def extract_boundary_mask(self, binary, height, width):
+        """
+        功能：提取需要抑制的边界型区域掩膜。
+        输入：`binary`、`height`、`width` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         if not self.suppress_boundary_like_blobs:
             return np.zeros_like(binary, dtype=bool), []
 
@@ -253,6 +303,11 @@ class ForwardSonarTargetDetector:
         return boundary_mask.astype(bool), suppressed
 
     def extract_candidates(self, image, binary, threshold_map, background_level, bearing, max_candidates=None):
+        """
+        功能：从二值检测结果中提取候选目标。
+        输入：`image`、`binary`、`threshold_map`、`background_level`、`bearing`、`max_candidates` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
         if num_labels <= 1:
             return [], []
@@ -351,6 +406,11 @@ class ForwardSonarTargetDetector:
         return candidates[:max(int(limit), 1)], suppressed
 
     def filter_candidates_for_pdaf(self, scene_candidates, bearing):
+        """
+        功能：根据 PDAF 需求筛选候选量测。
+        输入：`scene_candidates`、`bearing` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         if bearing is None:
             if not self.publish_candidates_without_bearing:
                 return []
@@ -381,6 +441,11 @@ class ForwardSonarTargetDetector:
         return filtered[:max(self.max_candidates, 1)]
 
     def component_shape_metrics(self, component_mask, bbox, area, height, width):
+        """
+        功能：计算连通域的形状度量指标。
+        输入：`component_mask`、`bbox`、`area`、`height`、`width` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         x, y, w, h = bbox
         roi = component_mask[y:y + h, x:x + w].astype(np.uint8)
         contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -410,6 +475,11 @@ class ForwardSonarTargetDetector:
         }
 
     def component_physical_extent(self, component_mask, height, width):
+        """
+        功能：估计连通域在物理空间中的尺度范围。
+        输入：`component_mask`、`height`、`width` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         rows, cols = np.nonzero(component_mask)
         if rows.size == 0:
             return {'length_m': 0.0, 'range_span_m': 0.0, 'lateral_span_m': 0.0, 'min_range_m': 0.0}
@@ -444,6 +514,11 @@ class ForwardSonarTargetDetector:
         }
 
     def is_boundary_like_blob(self, area, shape):
+        """
+        功能：判断连通域是否更像边界回波而非目标。
+        输入：`area`、`shape` 为该函数执行所需的输入参数。
+        输出：返回布尔值或状态判定结果。
+        """
         if not self.suppress_boundary_like_blobs:
             return False
         if area < self.boundary_min_area:
@@ -458,6 +533,11 @@ class ForwardSonarTargetDetector:
         return long_enough and physically_long and shape_like_boundary
 
     def is_near_noise_blob(self, shape, area):
+        """
+        功能：判断连通域是否属于近距离噪声团。
+        输入：`shape`、`area` 为该函数执行所需的输入参数。
+        输出：返回布尔值或状态判定结果。
+        """
         if not self.suppress_near_noise_blobs:
             return False
         if shape['min_range_m'] > self.near_noise_range_m:
@@ -469,6 +549,11 @@ class ForwardSonarTargetDetector:
         return True
 
     def estimate_candidate_uncertainty(self, score, mean_contrast, bearing_error):
+        """
+        功能：估计候选目标量测的不确定性。
+        输入：`score`、`mean_contrast`、`bearing_error` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         score_ref = max(self.publish_min_score * 3.0, 1.0e-3)
         quality_unc = 1.0 - min(score / score_ref, 1.0)
         contrast_ref = max(self.min_mean_contrast * 3.0, 1.0e-3)
@@ -485,6 +570,11 @@ class ForwardSonarTargetDetector:
         return float(np.clip(uncertainty, 0.0, 1.0))
 
     def publish_candidates(self, candidates, publisher=None):
+        """
+        功能：发布候选目标集合消息。
+        输入：`candidates`、`publisher` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if publisher is None:
             publisher = self.candidate_pub
         msg = Float32MultiArray()
@@ -506,6 +596,11 @@ class ForwardSonarTargetDetector:
         publisher.publish(msg)
 
     def publish_legacy_best_measurement(self, candidates):
+        """
+        功能：发布兼容旧接口的最佳单目标量测。
+        输入：`candidates` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if not candidates:
             return
         best = max(candidates, key=lambda item: item['score'])
@@ -514,6 +609,11 @@ class ForwardSonarTargetDetector:
         self.measurement_pub.publish(msg)
 
     def publish_debug_image(self, source_msg, image, candidates=None, bearing=None, suppressed=None, scene_candidates=None):
+        """
+        功能：发布用于调试检测流程的可视化图像。
+        输入：`source_msg`、`image`、`candidates`、`bearing`、`suppressed`、`scene_candidates` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         debug = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
         if bearing is not None:
             self.draw_bearing_gate(debug, bearing)
@@ -545,6 +645,11 @@ class ForwardSonarTargetDetector:
         self.debug_image_pub.publish(msg)
 
     def valid_mask(self, height, width):
+        """
+        功能：构建图像中处于有效视场范围内的掩膜。
+        输入：`height`、`width` 为该函数执行所需的输入参数。
+        输出：返回布尔值或状态判定结果。
+        """
         forward = np.linspace(self.max_range, self.min_range, height, dtype=np.float32)[:, None]
         max_lateral = self.max_lateral_span()
         lateral = np.linspace(max_lateral, -max_lateral, width, dtype=np.float32)[None, :]
@@ -552,9 +657,19 @@ class ForwardSonarTargetDetector:
         return np.abs(lateral) <= forward * math.tan(half_fov)
 
     def max_lateral_span(self):
+        """
+        功能：计算指定前向距离处的最大横向覆盖宽度。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         return max(self.max_range * math.sin(math.radians(self.fov_deg) * 0.5), 1.0e-6)
 
     def bearing_gate_mask(self, height, width, bearing, gate_deg):
+        """
+        功能：构建基于方位门限的列掩膜。
+        输入：`height`、`width`、`bearing`、`gate_deg` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         forward = np.linspace(self.max_range, self.min_range, height, dtype=np.float32)[:, None]
         max_lateral = self.max_lateral_span()
         lateral = np.linspace(max_lateral, -max_lateral, width, dtype=np.float32)[None, :]
@@ -563,12 +678,22 @@ class ForwardSonarTargetDetector:
         return np.abs(delta) <= math.radians(gate_deg)
 
     def bearing_to_col(self, bearing, forward, width):
+        """
+        功能：将方位角映射到图像列索引。
+        输入：`bearing`、`forward`、`width` 为该函数执行所需的输入参数。
+        输出：返回与方位角对应的图像列索引。
+        """
         lateral = forward * math.tan(bearing)
         max_lateral = self.max_lateral_span()
         t = (max_lateral - lateral) / (2.0 * max_lateral)
         return int(np.clip(t, 0.0, 1.0) * (width - 1))
 
     def draw_bearing_gate(self, image, bearing):
+        """
+        功能：在调试图像上绘制方位门限区域。
+        输入：`image`、`bearing` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         height, width = image.shape[:2]
         gate = math.radians(self.bearing_candidate_gate_deg)
         color = (255, 220, 0) if image.ndim == 3 else 180
@@ -582,6 +707,11 @@ class ForwardSonarTargetDetector:
                 cv2.polylines(image, [np.array(pts, dtype=np.int32)], False, color, 1)
 
     def row_col_to_measurement(self, row, col, height, width):
+        """
+        功能：把图像行列索引转换为物理量测值。
+        输入：`row`、`col`、`height`、`width` 为该函数执行所需的输入参数。
+        输出：返回由图像索引换算得到的物理量测。
+        """
         row = float(np.clip(row, 0.0, max(height - 1, 0)))
         col = float(np.clip(col, 0.0, max(width - 1, 0)))
         forward = self.min_range + (1.0 - row / max(height - 1, 1)) * (self.max_range - self.min_range)

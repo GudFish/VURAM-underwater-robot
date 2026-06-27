@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+功能：将目标置信状态转换为 RViz 标记，展示估计位置与协方差椭圆。
+输入：通过 ROS 参数以及状态、边界、图像或置信度话题接收可视化输入。
+输出：发布 RViz 标记、TF 或显示结果，辅助观察系统运行状态。
+"""
 import math
 
 import numpy as np
@@ -11,7 +16,17 @@ from visualization_msgs.msg import Marker
 
 
 class TargetBeliefViz:
+    """
+    功能：把 belief 状态转换为目标位置和协方差椭圆的可视化标记。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('target_belief_viz', anonymous=True)
 
         self.belief_topic = rospy.get_param('~belief_topic', '/target_estimate/belief')
@@ -31,10 +46,20 @@ class TargetBeliefViz:
         rospy.Subscriber(self.belief_topic, Odometry, self.belief_cb, queue_size=1)
 
     def belief_cb(self, msg):
+        """
+        功能：处理目标 belief 消息并更新内部估计状态。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.latest_belief = msg
         self.publish_markers()
 
     def publish_markers(self):
+        """
+        功能：构建并发布当前可视化 Marker 集合。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if self.latest_belief is None:
             return
 
@@ -95,6 +120,11 @@ class TargetBeliefViz:
         self.marker_pub.publish(text_marker)
 
     def build_ellipse_points(self, cx, cy, cov_xy):
+        """
+        功能：根据协方差生成椭圆轮廓点集。
+        输入：`cx`、`cy`、`cov_xy` 为该函数执行所需的输入参数。
+        输出：返回椭圆轮廓点集。
+        """
         eigvals, eigvecs = np.linalg.eigh(cov_xy)
         eigvals = np.maximum(eigvals, 1e-9)
         axes = self.ellipse_sigma * np.sqrt(eigvals)

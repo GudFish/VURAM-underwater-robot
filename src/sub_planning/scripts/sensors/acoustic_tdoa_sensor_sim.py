@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+功能：仿真多基阵 TDOA 声学测量，为目标方位估计器提供测试数据。
+输入：通过 ROS 参数以及里程计、目标、图像或场景话题接收传感仿真与检测输入。
+输出：发布仿真量测、候选目标或图像数据，并维护传感器内部缓存。
+"""
 import math
 import random
 
@@ -12,7 +17,17 @@ from std_msgs.msg import Float32MultiArray
 
 
 class AcousticTDOASensorSim:
+    """
+    功能：根据机器人与目标相对位置生成 TDOA 声学测量。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('acoustic_tdoa_sensor_sim', anonymous=True)
 
         self.state_topic = rospy.get_param('~state_topic', '/mavros/state')
@@ -52,6 +67,11 @@ class AcousticTDOASensorSim:
         rospy.loginfo('[TDOASim] started. waiting for arm before publishing %s', self.tdoa_topic)
 
     def load_beacons(self):
+        """
+        功能：加载并转换阵列基元坐标配置。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         default = [[0.65, 0.60], [-0.65, 0.60], [0.65, -0.60], [-0.65, -0.60]]
         beacons = rospy.get_param('~beacons_body', default)
         if len(beacons) != 4:
@@ -63,6 +83,11 @@ class AcousticTDOASensorSim:
         return out
 
     def state_cb(self, msg):
+        """
+        功能：执行 `state_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         armed_rising = (not self.last_armed) and msg.armed
         armed_falling = self.last_armed and (not msg.armed)
         self.current_state = msg
@@ -75,6 +100,11 @@ class AcousticTDOASensorSim:
         self.last_armed = msg.armed
 
     def odom_cb(self, msg):
+        """
+        功能：执行 `odom_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.robot_x = msg.pose.pose.position.x
         self.robot_y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
@@ -84,16 +114,31 @@ class AcousticTDOASensorSim:
         self.have_robot = True
 
     def target_cb(self, msg):
+        """
+        功能：处理目标位姿消息并更新目标状态缓存。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.target_x = msg.pose.position.x
         self.target_y = msg.pose.position.y
         self.have_target = True
 
     def body_to_world(self, bx, by):
+        """
+        功能：将机体系二维点转换到世界坐标系。
+        输入：`bx`、`by` 为该函数执行所需的输入参数。
+        输出：返回转换后的世界坐标分量。
+        """
         c = math.cos(self.robot_yaw)
         s = math.sin(self.robot_yaw)
         return self.robot_x + c * bx - s * by, self.robot_y + s * bx + c * by
 
     def timer_cb(self, _event):
+        """
+        功能：执行 `timer_cb` 对应的核心处理逻辑。
+        输入：`_event` 为 ROS 定时器事件；运行时还依赖对象内部状态与缓存数据。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if not self.measurement_enabled:
             rospy.logwarn_throttle(2.0, '[TDOASim] waiting for vehicle arm...')
             return

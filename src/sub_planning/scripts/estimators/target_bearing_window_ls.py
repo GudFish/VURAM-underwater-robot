@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+功能：基于滑动窗口最小二乘方法融合方位观测，估计目标在二维平面中的位置与速度。
+输入：通过 ROS 参数以及里程计、方位、声呐等观测话题接收估计所需数据。
+输出：发布目标位姿、速度、belief 或调试消息，并维护估计器状态。
+"""
 import math
 
 import numpy as np
@@ -12,7 +17,17 @@ from std_msgs.msg import Float32
 
 
 class TargetBearingWindowLS:
+    """
+    功能：基于滑动窗口最小二乘求解目标状态，并负责观测缓存与结果发布。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('target_bearing_window_ls', anonymous=True)
 
         self.robot_odom_topic = rospy.get_param('~robot_odom_topic', '/mavros/local_position/odom')
@@ -60,9 +75,19 @@ class TargetBearingWindowLS:
 
     @staticmethod
     def wrap_pi(angle):
+        """
+        功能：将输入角度归一化到 [-pi, pi] 区间。
+        输入：`angle` 为该函数执行所需的输入参数。
+        输出：返回归一化后的弧度角。
+        """
         return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
     def state_cb(self, msg):
+        """
+        功能：执行 `state_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         armed_rising = (not self.last_armed) and msg.armed
         armed_falling = self.last_armed and (not msg.armed)
         self.current_state = msg
@@ -75,6 +100,11 @@ class TargetBearingWindowLS:
         self.last_armed = msg.armed
 
     def odom_cb(self, msg):
+        """
+        功能：执行 `odom_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.robot_x = msg.pose.pose.position.x
         self.robot_y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
@@ -84,11 +114,21 @@ class TargetBearingWindowLS:
         self.have_robot = True
 
     def reset_estimator(self, reason):
+        """
+        功能：清空缓存观测并重置估计器到初始状态。
+        输入：`reason` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         self.samples = []
         self.last_solution = None
         rospy.loginfo('[TargetBearingWindowLS] reset: %s', reason)
 
     def bearing_cb(self, msg):
+        """
+        功能：处理方位消息并更新当前方位缓存。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if not self.current_state.armed or not self.have_robot:
             return
 
@@ -107,11 +147,21 @@ class TargetBearingWindowLS:
             self.samples = self.samples[-self.window_size:]
 
     def prune_samples(self, now_sec):
+        """
+        功能：清理超出时间窗口或不再有效的历史观测样本。
+        输入：`now_sec` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         self.samples = [s for s in self.samples if now_sec - s['stamp'] <= self.max_sample_age]
         if len(self.samples) > self.window_size:
             self.samples = self.samples[-self.window_size:]
 
     def build_linear_initial_guess(self, now_sec):
+        """
+        功能：构造窗口最小二乘求解的线性初值。
+        输入：`now_sec` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         rows = []
         rhs = []
         weight = 1.0 / max(self.bearing_noise_std, 1e-6)
@@ -156,6 +206,11 @@ class TargetBearingWindowLS:
         return theta
 
     def residual_and_jacobian(self, theta, now_sec):
+        """
+        功能：计算残差及对应的雅可比矩阵。
+        输入：`theta`、`now_sec` 为该函数执行所需的输入参数。
+        输出：返回残差及其雅可比矩阵。
+        """
         residuals = []
         jac_rows = []
         weights = []
@@ -184,6 +239,11 @@ class TargetBearingWindowLS:
         return np.array(residuals, dtype=float), np.array(jac_rows, dtype=float), np.array(weights, dtype=float)
 
     def solve_window(self, now_sec):
+        """
+        功能：求解当前观测窗口对应的最小二乘状态估计。
+        输入：`now_sec` 为该函数执行所需的输入参数。
+        输出：返回窗口求解结果及相关状态。
+        """
         theta = self.build_linear_initial_guess(now_sec)
         if theta is None or not np.all(np.isfinite(theta)):
             return None, None, None
@@ -225,6 +285,11 @@ class TargetBearingWindowLS:
         return best_theta, covariance, rms
 
     def apply_state_limits(self, theta):
+        """
+        功能：对求解得到的状态施加范围或速度限制。
+        输入：`theta` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         speed = math.hypot(theta[2], theta[3])
         if speed > self.max_speed > 0.0:
             scale = self.max_speed / max(speed, 1e-9)
@@ -240,6 +305,11 @@ class TargetBearingWindowLS:
             theta[1] = self.robot_y + rel_y * scale
 
     def estimate_covariance(self, jac):
+        """
+        功能：估计当前解的协方差或不确定性。
+        输入：`jac` 为该函数执行所需的输入参数。
+        输出：返回估计得到的协方差或不确定性结果。
+        """
         reg = np.diag([self.reg_position, self.reg_position, self.reg_velocity, self.reg_velocity])
         hessian = jac.T.dot(jac) + reg
         try:
@@ -250,6 +320,11 @@ class TargetBearingWindowLS:
         return np.clip(cov, -self.covariance_cap, self.covariance_cap)
 
     def timer_cb(self, event):
+        """
+        功能：执行 `timer_cb` 对应的核心处理逻辑。
+        输入：`event` 为 ROS 定时器事件；运行时还依赖对象内部状态与缓存数据。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if not self.have_robot:
             rospy.logwarn_throttle(2.0, '[TargetBearingWindowLS] waiting for robot odom...')
             return
@@ -278,6 +353,11 @@ class TargetBearingWindowLS:
         self.publish_estimate(now, state, covariance, rms)
 
     def publish_estimate(self, stamp, state, covariance, rms):
+        """
+        功能：发布当前估计得到的目标位姿、速度或 belief 结果。
+        输入：`stamp`、`state`、`covariance`、`rms` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         vx = float(state[2])
         vy = float(state[3])
         yaw = math.atan2(vy, vx) if math.hypot(vx, vy) > 1e-4 else 0.0

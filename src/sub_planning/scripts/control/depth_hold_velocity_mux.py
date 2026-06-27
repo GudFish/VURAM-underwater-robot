@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+功能：在平面速度指令基础上叠加定深控制，向下游控制链路输出完整三轴速度指令。
+输入：通过 ROS 参数、状态话题、里程计话题和控制输入话题接收运行配置与控制量。
+输出：发布速度、姿态或位置控制相关消息，并维护控制器内部状态。
+"""
 import sys
 from pathlib import Path
 
@@ -15,7 +20,17 @@ from nav_msgs.msg import Odometry
 
 
 class DepthHoldVelocityMux:
+    """
+    功能：将平面速度命令与定深控制输出进行融合，生成最终的三轴速度指令。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('depth_hold_velocity_mux', anonymous=True)
 
         self.state_topic = rospy.get_param('~state_topic', '/mavros/state')
@@ -53,15 +68,30 @@ class DepthHoldVelocityMux:
 
     @staticmethod
     def clip(value, vmin, vmax):
+        """
+        功能：对数值进行上下限裁剪。
+        输入：`value`、`vmin`、`vmax` 为该函数执行所需的输入参数。
+        输出：返回裁剪后的数值。
+        """
         return max(vmin, min(vmax, value))
 
     def capture_hold_depth(self, reason):
+        """
+        功能：锁存当前深度作为定深参考。
+        输入：`reason` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         if not self.have_odom:
             return
         self.hold_z = self.current_z
         rospy.loginfo('Depth reference latched from %s: z_ref=%.3f m', reason, self.hold_z)
 
     def state_cb(self, msg):
+        """
+        功能：执行 `state_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         armed_rising = (not self.last_armed) and msg.armed
         armed_falling = self.last_armed and (not msg.armed)
         self.current_state = msg
@@ -78,6 +108,11 @@ class DepthHoldVelocityMux:
         self.last_armed = msg.armed
 
     def odom_cb(self, msg):
+        """
+        功能：执行 `odom_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.current_z = msg.pose.pose.position.z
         self.current_vz_enu = msg.twist.twist.linear.z
         self.have_odom = True
@@ -86,10 +121,20 @@ class DepthHoldVelocityMux:
             self.capture_hold_depth('first odom after arming')
 
     def input_vel_cb(self, msg):
+        """
+        功能：执行 `input_vel_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.planar_cmd = msg
         self.last_cmd_time = rospy.Time.now()
 
     def compute_vz_cmd(self):
+        """
+        功能：根据定深误差计算垂向速度命令。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回垂向速度命令及对应的深度误差。
+        """
         if self.hold_z is None or not self.have_odom:
             return 0.0, 0.0
 
@@ -103,6 +148,11 @@ class DepthHoldVelocityMux:
         return vz_cmd, z_error_enu
 
     def timer_cb(self, _event):
+        """
+        功能：执行 `timer_cb` 对应的核心处理逻辑。
+        输入：`_event` 为 ROS 定时器事件；运行时还依赖对象内部状态与缓存数据。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if not self.have_odom:
             rospy.logwarn_throttle(5.0, 'Depth-hold mux waiting for odom...')
             return
@@ -133,6 +183,11 @@ class DepthHoldVelocityMux:
         )
 
     def run(self):
+        """
+        功能：执行 `run` 对应的核心处理逻辑。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；持续进入事件循环并保持节点运行。
+        """
         rospy.spin()
 
 

@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+功能：仿真前视声呐图像、目标回波、障碍物回波与边界响应。
+输入：通过 ROS 参数以及里程计、目标、图像或场景话题接收传感仿真与检测输入。
+输出：发布仿真量测、候选目标或图像数据，并维护传感器内部缓存。
+"""
 import math
 import os
 import struct
@@ -16,7 +21,17 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 
 class ForwardSonarSim:
+    """
+    功能：根据目标、障碍物与边界信息生成前视声呐图像回波。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('forward_sonar_sim', anonymous=True)
 
         self.robot_odom_topic = rospy.get_param('~robot_odom_topic', '/mavros/local_position/odom')
@@ -97,6 +112,11 @@ class ForwardSonarSim:
         )
 
     def odom_cb(self, msg):
+        """
+        功能：执行 `odom_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.robot_x = msg.pose.pose.position.x
         self.robot_y = msg.pose.pose.position.y
         self.robot_z = msg.pose.pose.position.z
@@ -109,6 +129,11 @@ class ForwardSonarSim:
         self.have_robot = True
 
     def target_cb(self, msg):
+        """
+        功能：处理目标位姿消息并更新目标状态缓存。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.target_x = msg.pose.position.x
         self.target_y = msg.pose.position.y
         self.target_z = msg.pose.position.z
@@ -119,9 +144,19 @@ class ForwardSonarSim:
         self.have_target = True
 
     def obstacle_cb(self, msg):
+        """
+        功能：执行 `obstacle_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.obstacle_markers = [marker for marker in msg.markers if marker.action != Marker.DELETE]
 
     def resolve_package_uri(self, uri):
+        """
+        功能：解析 package URI 并返回可读取的实际路径。
+        输入：`uri` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         if uri.startswith('package://'):
             rel = uri[len('package://'):]
             package_name, package_path = rel.split('/', 1)
@@ -133,6 +168,11 @@ class ForwardSonarSim:
         return uri
 
     def load_target_mesh_samples(self):
+        """
+        功能：加载目标网格采样点用于生成声呐回波。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         if self.target_model != 'mesh':
             return self.empty_mesh_samples()
         try:
@@ -152,6 +192,11 @@ class ForwardSonarSim:
 
     @staticmethod
     def empty_mesh_samples():
+        """
+        功能：返回空的网格采样结果占位结构。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回空的采样结果结构。
+        """
         return (
             np.empty((0, 3), dtype=float),
             np.empty((0, 3), dtype=float),
@@ -159,6 +204,11 @@ class ForwardSonarSim:
         )
 
     def load_binary_stl_samples(self, mesh_path):
+        """
+        功能：从二进制 STL 文件中采样网格表面点。
+        输入：`mesh_path` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         with open(mesh_path, 'rb') as stream:
             stream.read(80)
             triangle_count = struct.unpack('<I', stream.read(4))[0]
@@ -211,9 +261,19 @@ class ForwardSonarSim:
 
     @staticmethod
     def wrap_pi(angle):
+        """
+        功能：将输入角度归一化到 [-pi, pi] 区间。
+        输入：`angle` 为该函数执行所需的输入参数。
+        输出：返回归一化后的弧度角。
+        """
         return math.atan2(math.sin(angle), math.cos(angle))
 
     def world_to_body(self, wx, wy):
+        """
+        功能：将世界系二维点转换到机体系。
+        输入：`wx`、`wy` 为该函数执行所需的输入参数。
+        输出：返回转换后的机体系坐标分量。
+        """
         dx = wx - self.robot_x
         dy = wy - self.robot_y
         c = math.cos(self.robot_yaw)
@@ -221,11 +281,21 @@ class ForwardSonarSim:
         return c * dx + s * dy, -s * dx + c * dy
 
     def body_to_world(self, bx, by):
+        """
+        功能：将机体系二维点转换到世界坐标系。
+        输入：`bx`、`by` 为该函数执行所需的输入参数。
+        输出：返回转换后的世界坐标分量。
+        """
         c = math.cos(self.robot_yaw)
         s = math.sin(self.robot_yaw)
         return self.robot_x + c * bx - s * by, self.robot_y + s * bx + c * by
 
     def reload_boundary_if_needed(self):
+        """
+        功能：在边界参数变化时重新加载边界缓存。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         if not self.use_boundary:
             return
         now = rospy.Time.now()
@@ -243,6 +313,11 @@ class ForwardSonarSim:
             self.boundary_points = points
 
     def make_base_image(self):
+        """
+        功能：生成前视声呐图像的基础底图。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         image = np.random.normal(self.noise_mean, self.noise_std, (self.image_height, self.image_width))
         image = np.clip(image, 0.0, 255.0)
 
@@ -256,6 +331,11 @@ class ForwardSonarSim:
         return image
 
     def add_range_rings(self, image):
+        """
+        功能：向声呐图像叠加量程环。
+        输入：`image` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         spacing = max(self.range_ring_spacing, 1e-3)
         max_lateral = self.max_lateral_span()
         columns = np.arange(self.image_width)
@@ -274,6 +354,11 @@ class ForwardSonarSim:
                 image[rr[inside], valid_cols[inside]] += self.range_ring_intensity * gain
 
     def sonar_footprint_mask(self):
+        """
+        功能：构建声呐有效视场掩膜。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         forward = self.forward_ranges_by_row()[:, None]
         max_lateral = self.max_lateral_span()
         lateral = np.linspace(max_lateral, -max_lateral, self.image_width)[None, :]
@@ -282,16 +367,36 @@ class ForwardSonarSim:
         return np.where(mask, 1.0, 0.08)
 
     def forward_ranges_by_row(self):
+        """
+        功能：计算图像各行对应的前向距离。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         return np.linspace(self.max_range, self.min_range, self.image_height)
 
     def max_lateral_span(self):
+        """
+        功能：计算指定前向距离处的最大横向覆盖宽度。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         return max(self.max_range * math.sin(math.radians(self.fov_deg) * 0.5), 1e-6)
 
     def forward_to_row(self, forward):
+        """
+        功能：将前向距离映射到图像行索引。
+        输入：`forward` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         t = (forward - self.min_range) / max(self.max_range - self.min_range, 1e-6)
         return int((1.0 - np.clip(t, 0.0, 1.0)) * (self.image_height - 1))
 
     def lateral_to_col(self, lateral):
+        """
+        功能：将横向距离映射到图像列索引。
+        输入：`lateral` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         max_lateral = self.max_lateral_span()
         # Body +Y is vehicle-left. Image columns grow left-to-right, so negative
         # lateral/right-side returns must move toward larger column indices.
@@ -299,6 +404,11 @@ class ForwardSonarSim:
         return int(np.clip(t, 0.0, 1.0) * (self.image_width - 1))
 
     def in_sonar_footprint(self, forward, lateral):
+        """
+        功能：判断给定点是否落入声呐视场。
+        输入：`forward`、`lateral` 为该函数执行所需的输入参数。
+        输出：返回布尔值或状态判定结果。
+        """
         if forward < self.min_range:
             return False
         horizontal_range = math.hypot(forward, lateral)
@@ -309,6 +419,11 @@ class ForwardSonarSim:
         return abs(bearing) <= half_fov
 
     def add_echo_blob(self, image, forward, lateral, strength, radius_m, draw_shadow=True):
+        """
+        功能：在图像中添加一个带扩散特性的回波斑块。
+        输入：`image`、`forward`、`lateral`、`strength`、`radius_m`、`draw_shadow` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         if not self.in_sonar_footprint(forward, lateral):
             return
 
@@ -340,6 +455,11 @@ class ForwardSonarSim:
             )
 
     def add_target_echo(self, image):
+        """
+        功能：向图像添加基于目标中心的回波响应。
+        输入：`image` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         if not self.have_target:
             return None
         if self.target_model == 'mesh' and len(self.target_mesh_points) > 0:
@@ -359,6 +479,11 @@ class ForwardSonarSim:
         return slant_range, bearing
 
     def target_mesh_points_in_body(self):
+        """
+        功能：获取目标网格点在机体系下的坐标表示。
+        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输出：返回与该功能对应的计算结果。
+        """
         cy = math.cos(self.target_yaw)
         sy = math.sin(self.target_yaw)
         local = self.target_mesh_points
@@ -383,6 +508,11 @@ class ForwardSonarSim:
         return forward, lateral, vertical, normal_forward, normal_lateral, normal_vertical
 
     def add_target_mesh_echo(self, image):
+        """
+        功能：基于目标网格采样点向图像叠加回波。
+        输入：`image` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         forward, lateral, vertical, nf, nl, nv = self.target_mesh_points_in_body()
         horizontal_range = np.hypot(forward, lateral)
         slant_range = np.hypot(horizontal_range, vertical)
@@ -445,6 +575,11 @@ class ForwardSonarSim:
         return vr[nearest], vbearing[nearest]
 
     def add_obstacle_echoes(self, image):
+        """
+        功能：向图像叠加障碍物回波。
+        输入：`image` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         if not self.enable_obstacle_echoes or not self.obstacle_markers:
             return
         for marker in self.obstacle_markers:
@@ -475,6 +610,11 @@ class ForwardSonarSim:
                 self.add_echo_blob(image, vf[idx], vl[idx], strength, self.obstacle_point_radius)
 
     def sample_obstacle_marker(self, marker):
+        """
+        功能：根据障碍物配置采样几何表面点。
+        输入：`marker` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         rng = np.random.default_rng(marker.id + 1009)
         count = max(16, self.obstacle_sample_count)
         if marker.type == Marker.SPHERE:
@@ -487,6 +627,11 @@ class ForwardSonarSim:
 
     @staticmethod
     def sample_sphere_surface(count, radius, rng):
+        """
+        功能：采样球体表面点。
+        输入：`count`、`radius`、`rng` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         radius = max(float(radius), 1e-3)
         z = rng.uniform(-1.0, 1.0, count)
         theta = rng.uniform(-math.pi, math.pi, count)
@@ -495,6 +640,11 @@ class ForwardSonarSim:
 
     @staticmethod
     def sample_box_surface(count, sx, sy, sz, rng):
+        """
+        功能：采样长方体表面点。
+        输入：`count`、`sx`、`sy`、`sz`、`rng` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         half = np.array([max(float(sx), 1e-3), max(float(sy), 1e-3), max(float(sz), 1e-3)], dtype=float) * 0.5
         points = np.empty((count, 3), dtype=float)
         faces = rng.integers(0, 6, count)
@@ -508,6 +658,11 @@ class ForwardSonarSim:
 
     @staticmethod
     def sample_cylinder_surface(count, radius, height, rng):
+        """
+        功能：采样圆柱体表面点。
+        输入：`count`、`radius`、`height`、`rng` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         radius = max(float(radius), 1e-3)
         half_h = max(float(height), 1e-3) * 0.5
         points = np.empty((count, 3), dtype=float)
@@ -529,12 +684,22 @@ class ForwardSonarSim:
 
     @staticmethod
     def marker_yaw(marker):
+        """
+        功能：提取可视化标记对应的偏航角。
+        输入：`marker` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         q = marker.pose.orientation
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         return math.atan2(siny_cosp, cosy_cosp)
 
     def local_points_to_world(self, local, marker):
+        """
+        功能：将局部坐标点集批量转换到世界坐标系。
+        输入：`local`、`marker` 为该函数执行所需的输入参数。
+        输出：返回转换到世界坐标系的点集。
+        """
         yaw = self.marker_yaw(marker)
         cy = math.cos(yaw)
         sy = math.sin(yaw)
@@ -545,6 +710,11 @@ class ForwardSonarSim:
         return world
 
     def points_world_to_body(self, world):
+        """
+        功能：将世界系点集批量转换到机体系。
+        输入：`world` 为该函数执行所需的输入参数。
+        输出：返回转换到机体系的点集。
+        """
         dx = world[:, 0] - self.robot_x
         dy = world[:, 1] - self.robot_y
         cr = math.cos(self.robot_yaw)
@@ -555,6 +725,11 @@ class ForwardSonarSim:
         return forward, lateral, vertical
 
     def add_mesh_shadow(self, image, forward, lateral, strength):
+        """
+        功能：根据网格回波向图像叠加遮挡阴影。
+        输入：`image`、`forward`、`lateral`、`strength` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         self.add_radial_shadow(
             image,
             forward,
@@ -566,6 +741,11 @@ class ForwardSonarSim:
         )
 
     def add_radial_shadow(self, image, forward, lateral, start_offset, length, attenuation, width_px):
+        """
+        功能：按径向范围在图像中叠加阴影遮挡。
+        输入：`image`、`forward`、`lateral`、`start_offset`、`length`、`attenuation`、`width_px` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         range_xy = math.hypot(forward, lateral)
         if range_xy <= self.min_range:
             return
@@ -593,6 +773,11 @@ class ForwardSonarSim:
 
     @staticmethod
     def ray_segment_intersection(origin, direction, p0, p1):
+        """
+        功能：计算射线与线段的交点参数。
+        输入：`origin`、`direction`、`p0`、`p1` 为该函数执行所需的输入参数。
+        输出：返回交点参数；若不存在交点则返回空值。
+        """
         ox, oy = origin
         dx, dy = direction
         sx = p1[0] - p0[0]
@@ -609,6 +794,11 @@ class ForwardSonarSim:
         return None
 
     def add_boundary_echoes(self, image):
+        """
+        功能：向图像叠加边界反射回波。
+        输入：`image` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
         if len(self.boundary_points) < 3:
             return
         half_fov = math.radians(self.fov_deg) * 0.5
@@ -632,6 +822,11 @@ class ForwardSonarSim:
             bearing += step
 
     def publish_image(self, image, stamp):
+        """
+        功能：发布生成好的声呐图像消息。
+        输入：`image`、`stamp` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         image_u8 = self.to_output_image(image)
         msg = Image()
         msg.header.stamp = stamp
@@ -645,6 +840,11 @@ class ForwardSonarSim:
         self.image_pub.publish(msg)
 
     def to_output_image(self, image):
+        """
+        功能：将内部图像数组转换为输出格式。
+        输入：`image` 为该函数执行所需的输入参数。
+        输出：返回与该功能对应的计算结果。
+        """
         output = np.clip(image, 0.0, None)
         if self.output_auto_gain:
             high = float(np.percentile(output, np.clip(self.output_gain_percentile, 50.0, 100.0)))
@@ -653,6 +853,11 @@ class ForwardSonarSim:
         return np.ascontiguousarray(np.clip(output, 0, 255).astype(np.uint8))
 
     def timer_cb(self, _event):
+        """
+        功能：执行 `timer_cb` 对应的核心处理逻辑。
+        输入：`_event` 为 ROS 定时器事件；运行时还依赖对象内部状态与缓存数据。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if not self.have_robot:
             rospy.logwarn_throttle(3.0, '[ForwardSonar] waiting for robot odometry: %s', self.robot_odom_topic)
             if self.publish_waiting_image:

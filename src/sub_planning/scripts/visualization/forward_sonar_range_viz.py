@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+功能：在 RViz 中发布前视声呐扇形量程可视化标记。
+输入：通过 ROS 参数以及状态、边界、图像或置信度话题接收可视化输入。
+输出：发布 RViz 标记、TF 或显示结果，辅助观察系统运行状态。
+"""
 import math
 
 import rospy
@@ -10,7 +15,17 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 
 class ForwardSonarRangeViz:
+    """
+    功能：构建并发布前视声呐扇区范围的 RViz 标记。
+    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
+    """
     def __init__(self):
+        """
+        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
+        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
+        """
         rospy.init_node('forward_sonar_range_viz', anonymous=True)
 
         self.robot_odom_topic = rospy.get_param('~robot_odom_topic', '/mavros/local_position/odom')
@@ -40,6 +55,11 @@ class ForwardSonarRangeViz:
         )
 
     def odom_cb(self, msg):
+        """
+        功能：执行 `odom_cb` 对应的核心处理逻辑。
+        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         self.robot_x = msg.pose.pose.position.x
         self.robot_y = msg.pose.pose.position.y
         self.robot_z = msg.pose.pose.position.z
@@ -52,11 +72,21 @@ class ForwardSonarRangeViz:
         self.have_robot = True
 
     def body_to_world(self, bx, by):
+        """
+        功能：将机体系二维点转换到世界坐标系。
+        输入：`bx`、`by` 为该函数执行所需的输入参数。
+        输出：返回转换后的世界坐标分量。
+        """
         c = math.cos(self.robot_yaw)
         s = math.sin(self.robot_yaw)
         return self.robot_x + c * bx - s * by, self.robot_y + s * bx + c * by
 
     def make_point(self, x, y, z=None):
+        """
+        功能：创建并返回一个 `geometry_msgs/Point` 对象。
+        输入：`x`、`y`、`z` 为该函数执行所需的输入参数。
+        输出：返回构造好的点消息对象。
+        """
         point = Point()
         point.x = x
         point.y = y
@@ -64,6 +94,11 @@ class ForwardSonarRangeViz:
         return point
 
     def publish_markers(self, stamp):
+        """
+        功能：构建并发布当前可视化 Marker 集合。
+        输入：`stamp` 为该函数执行所需的输入参数。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         marker_array = MarkerArray()
         half_fov = math.radians(self.fov_deg) * 0.5
 
@@ -119,6 +154,11 @@ class ForwardSonarRangeViz:
         self.marker_pub.publish(marker_array)
 
     def timer_cb(self, _event):
+        """
+        功能：执行 `timer_cb` 对应的核心处理逻辑。
+        输入：`_event` 为 ROS 定时器事件；运行时还依赖对象内部状态与缓存数据。
+        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        """
         if not self.have_robot:
             rospy.logwarn_throttle(3.0, '[ForwardSonarRangeViz] waiting for robot odometry: %s', self.robot_odom_topic)
             return
