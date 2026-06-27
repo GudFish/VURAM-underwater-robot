@@ -1,15 +1,16 @@
 <?xml version="1.0"?>
 <launch>
-    <!-- 1. 将机器人模型加载到 ROS 参数服务器 -->
-    <!-- <param name="robot_description" textfile="$(find sub_planning)/urdf/AUV.urdf" /> -->
-    <param name="robot_description" textfile="$(find sub_planning)/urdf/open_frame_AUV.urdf" />
+  <!-- ==================== 机器人模型参数 ==================== -->
+  <!-- 这一组参数用于将 AUV 的 URDF 模型加载到 ROS 参数服务器。 -->
+  <!-- <param name="robot_description" textfile="$(find sub_planning)/urdf/AUV.urdf" /> -->
+  <param name="robot_description" textfile="$(find sub_planning)/urdf/open_frame_AUV.urdf" />
 
-    <!-- 2. 启动 robot_state_publisher，它负责将 URDF 中的模型信息发布为 TF 变换 -->
-    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" />
+  <!-- ==================== TF 与模型发布节点 ==================== -->
+  <!-- 启动模型状态发布和 map 到 base_link 的 TF 广播节点。 -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" />
+  <node name="tf_baselink_map_node" pkg="sub_planning" type="tf_baselink_map_node.py" />
 
-    <!-- 3. 发布urdf模型的base_link到map坐标的变换，因为/mavros/local_position/pose在map坐标下 -->
-    <node name="tf_baselink_map_node" pkg="sub_planning" type="tf_baselink_map_node.py" />
-
-    <!-- 启动rviz -->
-    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find sub_planning)/config/ardusub_display.rviz" output="screen" />
+  <!-- ==================== RViz 界面节点 ==================== -->
+  <!-- 使用预定义显示配置启动 RViz。 -->
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find sub_planning)/config/ardusub_display.rviz" output="screen" />
 </launch>

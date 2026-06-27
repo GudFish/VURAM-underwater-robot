@@ -1,11 +1,18 @@
 <?xml version="1.0"?>
 <launch>
+  <!-- ==================== 可视化接口参数 ==================== -->
+  <!-- 这一组参数定义 belief 可视化节点的输入输出话题。 -->
   <arg name="belief_topic" default="/target_estimate/belief"/>
   <arg name="marker_topic" default="/target_estimate/belief_marker"/>
 
+  <!-- ==================== Belief 可视化节点 ==================== -->
+  <!-- 这一组参数用于配置协方差椭圆与文字标记的显示方式。 -->
   <node name="target_belief_viz" pkg="sub_planning" type="target_belief_viz.py" output="screen">
+    <!-- 话题映射参数：连接 belief 输入与 Marker 输出接口。 -->
     <param name="belief_topic" value="$(arg belief_topic)"/>
     <param name="marker_topic" value="$(arg marker_topic)"/>
+
+    <!-- 显示参数：控制椭圆尺度以及是否显示 trace 与标准差文本。 -->
     <param name="ellipse_sigma" value="2.0"/>
     <param name="show_trace" value="True"/>
     <param name="show_pos_std" value="True"/>

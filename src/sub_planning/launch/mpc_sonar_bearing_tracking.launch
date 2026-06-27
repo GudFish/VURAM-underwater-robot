@@ -1,9 +1,13 @@
 <?xml version="1.0"?>
 <launch>
+  <!-- ==================== 传感器与显示开关 ==================== -->
+  <!-- 这一组参数控制前视声呐仿真、原始窗口和调试窗口是否启用。 -->
   <arg name="forward_sonar" default="true"/>
   <arg name="forward_sonar_window" default="false"/>
   <arg name="forward_sonar_debug_window" default="true"/>
 
+  <!-- ==================== 基础控制链路 ==================== -->
+  <!-- 启动飞控通信、速度控制与定深复用控制链路。 -->
   <include file="$(find sub_planning)/launch/common_vehicle_control.launch">
     <arg name="pos_ctrl" value="False"/>
     <arg name="vel_ctrl_rate" value="20.0"/>
@@ -12,6 +16,8 @@
     <arg name="output_vel_topic" value="/target_velocity"/>
   </include>
 
+  <!-- ==================== 场景与基础传感链路 ==================== -->
+  <!-- 启动动态目标场景、声学方位链路、belief 可视化和可选前视声呐仿真。 -->
   <include file="$(find sub_planning)/launch/dynamic_target.launch"/>
   <include file="$(find sub_planning)/launch/acoustic_tdoa_chain.launch"/>
   <include file="$(find sub_planning)/launch/target_belief_viz.launch"/>
@@ -19,7 +25,10 @@
     <arg name="show_window" value="$(arg forward_sonar_window)"/>
   </include>
 
+  <!-- ==================== 声呐目标检测节点 ==================== -->
+  <!-- 这一组参数用于从前视声呐图像中提取候选目标、场景候选和调试图像。 -->
   <node if="$(arg forward_sonar)" name="forward_sonar_target_detector" pkg="sub_planning" type="forward_sonar_target_detector.py" output="screen">
+    <!-- 话题接口参数：连接图像输入、方位引导和检测输出接口。 -->
     <param name="image_topic" value="/forward_sonar/image"/>
     <param name="bearing_topic" value="/target_acoustic_bearing"/>
     <param name="measurement_topic" value="/forward_sonar/measurement"/>
@@ -27,9 +36,13 @@
     <param name="scene_candidate_topic" value="/forward_sonar/scene_candidates"/>
     <param name="debug_topic" value="/forward_sonar/detection_debug"/>
     <param name="debug_image_topic" value="/forward_sonar/debug_image"/>
+
+    <!-- 声呐几何参数：定义检测使用的视场角和量程范围。 -->
     <param name="fov_deg" value="130.0"/>
     <param name="max_range" value="30.0"/>
     <param name="min_range" value="0.2"/>
+
+    <!-- 候选筛选参数：控制阈值、最小连通域和候选发布门槛。 -->
     <param name="threshold_percentile" value="98.5"/>
     <param name="min_threshold" value="30.0"/>
     <param name="min_blob_area" value="8"/>
@@ -41,6 +54,8 @@
     <param name="bearing_candidate_gate_deg" value="12.0"/>
     <param name="publish_candidates_without_bearing" value="true"/>
     <param name="publish_legacy_measurement" value="false"/>
+
+    <!-- 对比度与局部阈值参数：增强弱小目标的局部检测能力。 -->
     <param name="min_mean_contrast" value="7.0"/>
     <param name="min_peak_delta" value="6.0"/>
     <param name="min_excess_score" value="0.025"/>
@@ -50,6 +65,8 @@
     <param name="local_threshold_std_scale" value="0.9"/>
     <param name="local_threshold_min_delta" value="3.0"/>
     <param name="local_threshold_global_floor_ratio" value="0.25"/>
+
+    <!-- 边界与近距离噪声抑制参数：过滤边界回波和近场噪声团。 -->
     <param name="suppress_boundary_like_blobs" value="true"/>
     <param name="boundary_min_area" value="120"/>
     <param name="boundary_min_long_axis_px" value="45.0"/>
@@ -63,6 +80,8 @@
     <param name="near_noise_min_physical_length_m" value="0.45"/>
   </node>
 
+  <!-- ==================== 检测调试图像窗口 ==================== -->
+  <!-- 这一组参数用于查看目标检测后的调试图像。 -->
   <node if="$(arg forward_sonar_debug_window)" name="forward_sonar_detection_viewer" pkg="sub_planning" type="forward_sonar_image_viewer.py" output="screen">
     <param name="image_topic" value="/forward_sonar/debug_image"/>
     <param name="window_name" value="Forward Sonar Detection Debug"/>
@@ -70,7 +89,10 @@
     <param name="display_scale" value="1.4"/>
   </node>
 
+  <!-- ==================== EKF 目标估计节点 ==================== -->
+  <!-- 这一组参数用于融合声学方位与前视声呐量测，输出目标状态估计。 -->
   <node name="target_bearing_estimator_ekf" pkg="sub_planning" type="target_bearing_estimator_ekf.py" output="screen">
+    <!-- 话题接口参数：连接里程计、方位、声呐候选和估计输出接口。 -->
     <param name="robot_odom_topic" value="/mavros/local_position/odom"/>
     <param name="state_topic" value="/mavros/state"/>
     <param name="bearing_topic" value="/target_acoustic_bearing"/>
@@ -80,16 +102,22 @@
     <param name="target_twist_topic" value="/target_estimate/twist"/>
     <param name="belief_topic" value="/target_estimate/belief"/>
     <param name="pdaf_debug_topic" value="/target_estimate/pdaf_debug"/>
+
+    <!-- 滤波频率与观测噪声参数：控制 EKF 更新频率和量测噪声模型。 -->
     <param name="filter_rate" value="10.0"/>
     <param name="bearing_noise_std" value="0.08"/>
     <param name="sonar_range_noise_std" value="0.75"/>
     <param name="sonar_bearing_noise_std" value="0.08"/>
+
+    <!-- 声呐候选门控参数：控制候选分数、不确定性和量测超时时间。 -->
     <param name="sonar_min_score" value="0.15"/>
     <param name="sonar_max_uncertainty" value="0.75"/>
     <param name="sonar_uncertainty_noise_scale" value="6.0"/>
     <param name="sonar_measurement_timeout" value="0.5"/>
     <param name="sonar_candidate_timeout" value="0.5"/>
     <param name="acoustic_measurement_timeout" value="0.5"/>
+
+    <!-- PDAF 关联参数：控制候选门控、漏检权重和候选关联数量。 -->
     <param name="pda_detection_probability" value="0.85"/>
     <param name="pda_missed_weight" value="0.20"/>
     <param name="pda_gate_chi2" value="9.21"/>
@@ -98,6 +126,8 @@
     <param name="pda_range_weight_min" value="0.35"/>
     <param name="pda_range_weight_power" value="1.0"/>
     <param name="bearing_candidate_gate_deg" value="12.0"/>
+
+    <!-- 初始化策略参数：控制初始化方式、最小量程和初始化先验。 -->
     <param name="prefer_sonar_init" value="true"/>
     <param name="allow_bearing_only_init" value="False"/>
     <param name="min_bearing_range" value="0.25"/>
@@ -111,25 +141,38 @@
     <param name="reset_on_disarm" value="True"/>
   </node>
 
+  <!-- ==================== Belief-aware MPC 节点 ==================== -->
+  <!-- 这一组参数用于配置结合声学方位与场景候选的 belief-aware MPC 跟踪器。 -->
   <node name="mpc_belief_target_tracker" pkg="sub_planning" type="mpc_belief_target_tracker.py" output="screen">
+    <!-- 动力学模型参数：加载共享 Fossen 动力学参数。 -->
     <rosparam command="load" file="$(find sub_planning)/config/fossen3_dynamics.yaml" ns="dynamics"/>
+
+    <!-- 话题接口参数：连接 belief、方位、场景候选与控制输出接口。 -->
     <param name="odom_topic" value="/mavros/local_position/odom"/>
     <param name="belief_topic" value="/target_estimate/belief"/>
     <param name="bearing_topic" value="/target_acoustic_bearing"/>
     <param name="scene_candidate_topic" value="/forward_sonar/scene_candidates"/>
     <param name="vel_topic" value="/target_velocity_xy"/>
     <param name="yaw_topic" value="/target_yaw"/>
+
+    <!-- 预测时域参数：设置 MPC 更新频率、时间步长和预测长度。 -->
     <param name="control_rate" value="5.0"/>
     <param name="mpc_dt" value="0.2"/>
     <param name="horizon_steps" value="12"/>
+
+    <!-- 跟踪目标参数：配置跟随距离、探索距离和终点容差。 -->
     <param name="desired_standoff" value="3.0"/>
     <param name="exploration_standoff" value="4.5"/>
     <param name="goal_tolerance" value="0.8"/>
+
+    <!-- 不确定性调节参数：根据 belief 大小平衡跟踪与探索行为。 -->
     <param name="unc_low" value="1.0"/>
     <param name="unc_high" value="8.0"/>
     <param name="unc_pos_gain" value="1.0"/>
     <param name="unc_vel_gain" value="0.4"/>
     <param name="sigma_min" value="0.1"/>
+
+    <!-- 信息增益权重参数：鼓励机器人获取更有价值的方位观测。 -->
     <param name="w_sigma" value="1.2"/>
     <param name="w_bearing_trace" value="1.2"/>
     <param name="w_bearing_logdet" value="0.0"/>
@@ -137,12 +180,16 @@
     <param name="bearing_process_pos" value="0.05"/>
     <param name="bearing_process_vel" value="0.10"/>
     <param name="min_bearing_range" value="0.5"/>
+
+    <!-- 控制约束参数：限制速度、偏航和相邻控制步变化量。 -->
     <param name="u_max" value="0.8"/>
     <param name="v_max" value="0.6"/>
     <param name="r_max" value="0.6"/>
     <param name="du_step_max" value="0.25"/>
     <param name="dv_step_max" value="0.20"/>
     <param name="dyaw_step_max" value="0.30"/>
+
+    <!-- 虚拟控制映射参数：定义动力学控制映射系数与上限。 -->
     <param name="psi_kp" value="1.6"/>
     <param name="k_tau_u" value="120.0"/>
     <param name="k_tau_v" value="120.0"/>
@@ -150,6 +197,8 @@
     <param name="tau_u_max" value="200.0"/>
     <param name="tau_v_max" value="200.0"/>
     <param name="tau_r_max" value="120.0"/>
+
+    <!-- 代价函数权重参数：平衡跟踪精度、控制平滑性与横向误差。 -->
     <param name="w_track" value="2.0"/>
     <param name="w_terminal_track" value="10.0"/>
     <param name="w_yaw" value="0.8"/>
@@ -158,6 +207,8 @@
     <param name="w_du" value="0.6"/>
     <param name="w_dyaw" value="0.4"/>
     <param name="w_cte" value="2.5"/>
+
+    <!-- 声呐视场约束参数：鼓励目标保持在前视声呐有效探测范围内。 -->
     <param name="sonar_fov_deg" value="130.0"/>
     <param name="sonar_min_range" value="0.2"/>
     <param name="sonar_max_range" value="30.0"/>
@@ -165,10 +216,14 @@
     <param name="w_sonar_range" value="2.0"/>
     <param name="w_sonar_center" value="1.5"/>
     <param name="w_sonar_front" value="4.0"/>
+
+    <!-- 场地边界约束参数：配置规划边界读取路径和安全留边。 -->
     <param name="boundary_param" value="/boundary_loader/enu_points"/>
     <param name="boundary_margin" value="1.0"/>
     <param name="boundary_wait_timeout" value="8.0"/>
     <param name="boundary_required" value="true"/>
+
+    <!-- 搜索策略参数：当观测缺失时配置主动搜索与方位搜索行为。 -->
     <param name="search_enable" value="true"/>
     <param name="search_forward_speed" value="0.15"/>
     <param name="search_yaw_rate" value="0.25"/>
@@ -176,6 +231,8 @@
     <param name="bearing_search_timeout" value="1.0"/>
     <param name="bearing_search_forward_min_scale" value="0.25"/>
     <param name="bearing_search_lateral_gain" value="0.35"/>
+
+    <!-- 活跃场景候选参数：控制从场景候选中提取主动分离目标的策略。 -->
     <param name="active_scene_enable" value="true"/>
     <param name="active_scene_timeout" value="0.8"/>
     <param name="active_scene_max_points" value="8"/>

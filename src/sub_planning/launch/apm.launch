@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <launch>
-    <!-- 启动 MAVROS 的 apm.launch，为 ArduSub 提供通信 -->
-    <include file="$(find mavros)/launch/apm.launch">
-        <!-- 修改飞控连接地址 -->
-        <arg name="fcu_url" value="udp://127.0.0.1:14551@14555" />
-    </include>
+  <!-- ==================== MAVROS 启动配置 ==================== -->
+  <!-- 这一组参数用于指定 MAVROS 与 ArduSub 飞控的连接地址。 -->
+  <include file="$(find mavros)/launch/apm.launch">
+    <arg name="fcu_url" value="udp://127.0.0.1:14551@14555" />
+  </include>
 </launch>

@@ -1,22 +1,32 @@
 <?xml version="1.0"?>
 <launch>
+  <!-- ==================== 话题与显示开关参数 ==================== -->
+  <!-- 这一组参数定义声呐仿真输入输出话题，并控制可视化节点是否启动。 -->
   <arg name="robot_odom_topic" default="/mavros/local_position/odom"/>
   <arg name="target_pose_topic" default="/dynamic_target/pose"/>
   <arg name="image_topic" default="/forward_sonar/image"/>
   <arg name="marker_topic" default="/forward_sonar/markers"/>
   <arg name="obstacle_marker_topic" default="/dynamic_obstacles/markers"/>
   <arg name="enable_obstacle_echoes" default="true"/>
-  <arg name="target_mesh_resource" default="package://sub_planning/meshes/AUV.STL"/>
-  <arg name="target_mesh_scale" default="1.0"/>
   <arg name="show_range" default="true"/>
   <arg name="show_window" default="true"/>
 
+  <!-- ==================== 目标模型参数 ==================== -->
+  <!-- 这一组参数控制目标网格资源和网格尺度。 -->
+  <arg name="target_mesh_resource" default="package://sub_planning/meshes/AUV.STL"/>
+  <arg name="target_mesh_scale" default="1.0"/>
+
+  <!-- ==================== 前视声呐仿真节点 ==================== -->
+  <!-- 这一组参数用于生成前视声呐图像、目标回波、障碍物回波和边界回波。 -->
   <node name="forward_sonar_sim" pkg="sub_planning" type="forward_sonar_sim.py" output="screen">
+    <!-- 话题映射参数：连接机器人、目标、障碍物与图像输出接口。 -->
     <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>
     <param name="target_pose_topic" value="$(arg target_pose_topic)"/>
     <param name="obstacle_marker_topic" value="$(arg obstacle_marker_topic)"/>
     <param name="enable_obstacle_echoes" value="$(arg enable_obstacle_echoes)"/>
     <param name="image_topic" value="$(arg image_topic)"/>
+
+    <!-- 目标网格回波参数：配置目标模型类型、采样密度与阴影效果。 -->
     <param name="target_model" value="mesh"/>
     <param name="target_mesh_resource" value="$(arg target_mesh_resource)"/>
     <param name="target_mesh_scale" value="$(arg target_mesh_scale)"/>
@@ -26,32 +36,47 @@
     <param name="target_mesh_occlusion_cell" value="2"/>
     <param name="target_mesh_shadow_start" value="0.45"/>
     <param name="target_mesh_shadow_length" value="2.0"/>
+
+    <!-- 障碍物回波参数：控制障碍物表面采样强度和点扩散范围。 -->
     <param name="obstacle_strength" value="170.0"/>
     <param name="obstacle_sample_count" value="260"/>
     <param name="obstacle_point_radius" value="0.11"/>
+
+    <!-- 图像输出参数：控制自动增益、等待图像和量程环显示策略。 -->
     <param name="output_auto_gain" value="true"/>
     <param name="output_gain_percentile" value="99.4"/>
     <param name="publish_waiting_image" value="true"/>
     <param name="show_range_rings" value="false"/>
     <param name="range_ring_spacing" value="5.0"/>
+
+    <!-- 声呐几何参数：定义发布频率、扇区视场和图像分辨率。 -->
     <param name="publish_rate" value="10.0"/>
     <param name="fov_deg" value="130.0"/>
     <param name="max_range" value="30.0"/>
     <param name="min_range" value="0.2"/>
     <param name="image_width" value="512"/>
     <param name="image_height" value="256"/>
+
+    <!-- 边界回波参数：配置是否使用场地边界以及读取的边界参数路径。 -->
     <param name="use_boundary" value="true"/>
     <param name="boundary_param" value="/boundary_loader/sim_enu_points"/>
   </node>
 
+  <!-- ==================== 量程扇形可视化节点 ==================== -->
+  <!-- 这一组参数用于在 RViz 中显示前视声呐的扇形覆盖范围。 -->
   <node if="$(arg show_range)" name="forward_sonar_range_viz" pkg="sub_planning" type="forward_sonar_range_viz.py" output="screen">
+    <!-- 话题与显示参数：连接机器人里程计和 Marker 输出接口。 -->
     <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>
     <param name="marker_topic" value="$(arg marker_topic)"/>
+
+    <!-- 量程可视化参数：控制显示频率、视场角和最远量程。 -->
     <param name="publish_rate" value="10.0"/>
     <param name="fov_deg" value="130.0"/>
     <param name="max_range" value="30.0"/>
   </node>
 
+  <!-- ==================== 图像显示节点 ==================== -->
+  <!-- 这一组参数用于弹窗显示生成好的前视声呐图像。 -->
   <node if="$(arg show_window)" name="forward_sonar_image_viewer" pkg="sub_planning" type="forward_sonar_image_viewer.py" output="screen">
     <param name="image_topic" value="$(arg image_topic)"/>
     <param name="window_name" value="Forward Looking Sonar"/>

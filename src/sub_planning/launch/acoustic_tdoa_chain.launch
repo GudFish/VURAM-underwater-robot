@@ -1,11 +1,16 @@
 <?xml version="1.0"?>
 <launch>
+  <!-- ==================== 话题接口参数 ==================== -->
+  <!-- 这一组参数定义声学仿真链路输入输出使用的话题名称。 -->
   <arg name="state_topic" default="/mavros/state"/>
   <arg name="robot_odom_topic" default="/mavros/local_position/odom"/>
   <arg name="target_pose_topic" default="/dynamic_target/pose"/>
   <arg name="tdoa_topic" default="/target_acoustic_tdoa"/>
   <arg name="bearing_topic" default="/target_acoustic_bearing"/>
   <arg name="bearing_debug_topic" default="/target_acoustic_bearing_debug"/>
+
+  <!-- ==================== TDOA 仿真参数 ==================== -->
+  <!-- 这一组参数控制测量频率、传播速度、噪声和丢失概率等仿真特性。 -->
   <arg name="measurement_rate" default="2.0"/>
   <arg name="sound_speed" default="1500.0"/>
   <arg name="tdoa_noise_std" default="2.0e-5"/>
@@ -14,28 +19,44 @@
   <arg name="drop_prob" default="0.15"/>
   <arg name="reset_on_disarm" default="True"/>
 
+  <!-- ==================== TDOA 传感器仿真节点 ==================== -->
+  <!-- 这一组参数配置阵列基元布局以及 TDOA 声学量测的发布行为。 -->
   <node name="acoustic_tdoa_sensor_sim" pkg="sub_planning" type="acoustic_tdoa_sensor_sim.py" output="screen">
+    <!-- 话题映射参数：连接机器人状态、目标位置和 TDOA 输出话题。 -->
     <param name="state_topic" value="$(arg state_topic)"/>
     <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>
     <param name="target_pose_topic" value="$(arg target_pose_topic)"/>
     <param name="tdoa_topic" value="$(arg tdoa_topic)"/>
+
+    <!-- 仿真物理参数：配置测量频率、声速和时间差噪声强度。 -->
     <param name="measurement_rate" value="$(arg measurement_rate)"/>
     <param name="sound_speed" value="$(arg sound_speed)"/>
     <param name="tdoa_noise_std" value="$(arg tdoa_noise_std)"/>
     <param name="beacon_ref" value="$(arg beacon_ref)"/>
+
+    <!-- 阵列几何参数：定义机体系下四基元的安装位置。 -->
     <rosparam param="beacons_body">[[0.65, 0.60], [-0.65, 0.60], [0.65, -0.60], [-0.65, -0.60]]</rosparam>
+
+    <!-- 量测有效性参数：配置量程上限、随机丢包和解锁后的复位行为。 -->
     <param name="max_range" value="$(arg max_range)"/>
     <param name="drop_prob" value="$(arg drop_prob)"/>
     <param name="reset_on_disarm" value="$(arg reset_on_disarm)"/>
   </node>
 
+  <!-- ==================== 方位估计节点 ==================== -->
+  <!-- 这一组参数用于将 TDOA 量测转换为目标相对方位角。 -->
   <node name="tdoa_bearing_estimator" pkg="sub_planning" type="tdoa_bearing_estimator.py" output="screen">
+    <!-- 话题映射参数：连接里程计、TDOA 输入和方位输出接口。 -->
     <param name="odom_topic" value="$(arg robot_odom_topic)"/>
     <param name="tdoa_topic" value="$(arg tdoa_topic)"/>
     <param name="bearing_topic" value="$(arg bearing_topic)"/>
     <param name="debug_topic" value="$(arg bearing_debug_topic)"/>
+
+    <!-- 解算物理参数：保持与传感器仿真一致的声速和参考基元编号。 -->
     <param name="sound_speed" value="$(arg sound_speed)"/>
     <param name="beacon_ref" value="$(arg beacon_ref)"/>
+
+    <!-- 阵列几何参数：与 TDOA 仿真共享相同的基元布局。 -->
     <rosparam param="beacons_body">[[0.65, 0.60], [-0.65, 0.60], [0.65, -0.60], [-0.65, -0.60]]</rosparam>
   </node>
 </launch>

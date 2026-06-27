@@ -1,27 +1,43 @@
 <?xml version="1.0"?>
 <launch>
+  <!-- ==================== 控制链路开关参数 ==================== -->
+  <!-- 这一组参数控制位置控制、速度控制和定深速度复用链路是否启用。 -->
   <arg name="pos_ctrl" default="False"/>
   <arg name="vel_ctrl_rate" default="20.0"/>
   <arg name="depth_mux" default="True"/>
+
+  <!-- ==================== 话题接口参数 ==================== -->
+  <!-- 这一组参数定义定深复用节点输入输出使用的话题名称。 -->
   <arg name="input_vel_topic" default="/target_velocity_xy"/>
   <arg name="output_vel_topic" default="/target_velocity"/>
   <arg name="odom_topic" default="/mavros/local_position/odom"/>
   <arg name="state_topic" default="/mavros/state"/>
 
+  <!-- ==================== 基础控制节点 ==================== -->
+  <!-- 先启动飞控通信、边界和基础控制链路。 -->
   <include file="$(find sub_planning)/launch/AUV_ctrl.launch">
     <arg name="pos_ctrl" value="$(arg pos_ctrl)"/>
     <arg name="vel_ctrl_rate" value="$(arg vel_ctrl_rate)"/>
   </include>
 
+  <!-- ==================== 定深速度复用节点 ==================== -->
+  <!-- 这一组参数用于在平面速度命令上叠加垂向定深控制。 -->
   <node name="depth_hold_velocity_mux" pkg="sub_planning" type="depth_hold_velocity_mux.py" output="screen" if="$(arg depth_mux)">
+    <!-- 话题映射参数：连接输入速度、输出速度、里程计和飞控状态。 -->
     <param name="input_vel_topic" value="$(arg input_vel_topic)"/>
     <param name="output_vel_topic" value="$(arg output_vel_topic)"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
     <param name="state_topic" value="$(arg state_topic)"/>
+
+    <!-- 控制频率参数：设置定深控制回路的执行频率。 -->
     <param name="control_rate" value="20.0"/>
+
+    <!-- 定深控制参数：配置深度 PD 增益和垂向速度限幅。 -->
     <param name="depth_kp" value="0.9"/>
     <param name="depth_kd" value="0.6"/>
     <param name="max_abs_vz" value="0.25"/>
+
+    <!-- 死区参数：抑制小范围深度和垂向速度抖动。 -->
     <param name="depth_deadband" value="0.03"/>
     <param name="vz_deadband" value="0.02"/>
   </node>

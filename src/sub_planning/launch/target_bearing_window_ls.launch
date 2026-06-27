@@ -1,5 +1,7 @@
 <?xml version="1.0"?>
 <launch>
+  <!-- ==================== 话题接口参数 ==================== -->
+  <!-- 这一组参数定义窗口最小二乘估计器的输入输出话题。 -->
   <arg name="robot_odom_topic" default="/mavros/local_position/odom"/>
   <arg name="state_topic" default="/mavros/state"/>
   <arg name="bearing_topic" default="/target_acoustic_bearing"/>
@@ -7,24 +9,33 @@
   <arg name="target_twist_topic" default="/target_estimate/twist"/>
   <arg name="belief_topic" default="/target_estimate/belief"/>
 
+  <!-- ==================== 窗口最小二乘估计节点 ==================== -->
+  <!-- 这一组参数用于配置观测窗口、最小二乘求解和状态有效性约束。 -->
   <node name="target_bearing_window_ls" pkg="sub_planning" type="target_bearing_window_ls.py" output="screen">
+    <!-- 话题映射参数：连接里程计、飞控状态和估计输出接口。 -->
     <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>
     <param name="state_topic" value="$(arg state_topic)"/>
     <param name="bearing_topic" value="$(arg bearing_topic)"/>
     <param name="target_pose_topic" value="$(arg target_pose_topic)"/>
     <param name="target_twist_topic" value="$(arg target_twist_topic)"/>
     <param name="belief_topic" value="$(arg belief_topic)"/>
+
+    <!-- 观测窗口参数：控制更新频率、窗口长度和样本有效时间。 -->
     <param name="filter_rate" value="10.0"/>
     <param name="window_size" value="16"/>
     <param name="min_samples" value="5"/>
     <param name="max_sample_age" value="12.0"/>
     <param name="bearing_noise_std" value="0.10"/>
+
+    <!-- 最小二乘求解参数：配置 LM 迭代和鲁棒损失相关超参数。 -->
     <param name="lm_max_iter" value="12"/>
     <param name="lm_tol" value="1e-5"/>
     <param name="lm_lambda" value="1e-3"/>
     <param name="robust_huber_delta" value="0.25"/>
     <param name="reg_position" value="1e-6"/>
     <param name="reg_velocity" value="1e-4"/>
+
+    <!-- 状态约束参数：限制估计速度、距离和协方差上界。 -->
     <param name="max_speed" value="2.0"/>
     <param name="max_distance" value="100.0"/>
     <param name="covariance_cap" value="10000.0"/>
