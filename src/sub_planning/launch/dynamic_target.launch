@@ -20,11 +20,11 @@
   <!-- ==================== 障碍物场景参数 ==================== -->
   <!-- 这一组参数控制动态障碍物的数量、尺寸和运动范围。 -->
   <arg name="obstacle_marker_topic" default="/dynamic_obstacles/markers"/>
-  <arg name="obstacle_count" default="6"/>
-  <arg name="obstacle_size_min" default="1.0"/>
-  <arg name="obstacle_size_max" default="2.0"/>
-  <arg name="obstacle_speed_min" default="0.03"/>
-  <arg name="obstacle_speed_max" default="0.15"/>
+  <arg name="obstacle_count" default="12"/>
+  <arg name="obstacle_size_min" default="0.8"/>
+  <arg name="obstacle_size_max" default="1.5"/>
+  <arg name="obstacle_speed_min" default="0.1"/>
+  <arg name="obstacle_speed_max" default="0.2"/>
 
   <!-- ==================== 动态目标生成节点 ==================== -->
   <!-- 这一组参数用于生成目标轨迹、目标网格和动态障碍物。 -->

@@ -44,11 +44,11 @@
 
     <!-- 候选筛选参数：控制阈值、最小连通域和候选发布门槛。 -->
     <param name="threshold_percentile" value="98.5"/>
-    <param name="min_threshold" value="30.0"/>
-    <param name="min_blob_area" value="8"/>
+    <param name="min_threshold" value="50.0"/>
+    <param name="min_blob_area" value="16"/>
     <param name="publish_min_score" value="0.15"/>
     <param name="candidate_min_score" value="0.025"/>
-    <param name="max_candidates" value="12"/>
+    <param name="max_candidates" value="20"/>
     <param name="publish_scene_candidates" value="true"/>
     <param name="max_scene_candidates" value="16"/>
     <param name="bearing_candidate_gate_deg" value="12.0"/>

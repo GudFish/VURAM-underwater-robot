@@ -11,7 +11,7 @@
 
   <!-- ==================== TDOA 仿真参数 ==================== -->
   <!-- 这一组参数控制测量频率、传播速度、噪声和丢失概率等仿真特性。 -->
-  <arg name="measurement_rate" default="2.0"/>
+  <arg name="measurement_rate" default="1.0"/>
   <arg name="sound_speed" default="1500.0"/>
   <arg name="tdoa_noise_std" default="2.0e-5"/>
   <arg name="beacon_ref" default="0"/>
