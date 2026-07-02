@@ -59,7 +59,10 @@ link_directories(
 )
 
 ## 可执行文件
-add_executable(sonar_image_pub src/sonar_image_pub.cpp)
+add_executable(sonar_image_pub
+  src/sonar_image_pub.cpp
+  src/sonar_image_pub.h
+)
 
 ## 链接库
 target_link_libraries(sonar_image_pub

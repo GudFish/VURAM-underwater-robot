@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ==================== 声呐驱动节点 ==================== -->
+  <node name="sonar_driver" pkg="sonar_driver" type="sonar_image_pub" output="screen" required="true">
+    <!-- 原始极坐标数据 (nRanges × nBeams) -->
+    <param name="image_topic"     value="/forward_sonar/image_raw" />
+    <!-- 笛卡尔坐标转换后图像 (匹配仿真格式: 底部中心原点，扇形展开) -->
+    <param name="cartesian_topic" value="/forward_sonar/image" />
+    <param name="frame_id"        value="sonar_frame" />
+    <param name="publish_rate"    value="10.0" />
+
+    <param name="range"           value="10.0" />
+    <param name="gain"            value="20" />
+    <param name="mode"            value="2" />  <!-- 1=LF, 2=HF -->
+
+    <param name="discovery_timeout" value="10" />
+    <param name="flip_horizontal"   value="false" />
+    <param name="flip_vertical"     value="false" />
+
+    <!-- 笛卡尔输出图像参数 (与仿真 forward_sonar_sim 对齐) -->
+    <param name="output_width"      value="512" />
+    <param name="output_height"     value="256" />
+    <param name="output_min_range"  value="0.2" />
+  </node>
+
+  <!-- ==================== 声呐图像显示 (笛卡尔转换后) ==================== -->
+  <node name="sonar_image_view" pkg="rqt_image_view" type="rqt_image_view" output="screen" />
+</launch>
