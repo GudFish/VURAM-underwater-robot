@@ -23,6 +23,9 @@ dist/
 *.bag
 *.bag.active
 
+# Local config
+/setting.ini
+
 # Editor/OS noise
 .vscode/
 .idea/
