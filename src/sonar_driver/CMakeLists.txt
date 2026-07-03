@@ -1,6 +1,13 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(sonar_driver)
 
+## 仅在 aarch64/arm64 平台编译此包
+execute_process(COMMAND uname -m OUTPUT_VARIABLE _host_arch OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(NOT _host_arch MATCHES "aarch64|arm64")
+  message(WARNING "\n==============================================\n  ${PROJECT_NAME}: SKIPPING build\n  Host arch    : ${_host_arch}\n  Required arch: aarch64 / arm64\n==============================================")
+  return()
+endif()
+
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++11)
 
