@@ -58,7 +58,7 @@
     <param name="image_height" value="256"/>
 
     <!-- 边界回波参数：配置是否使用场地边界以及读取的边界参数路径。 -->
-    <param name="use_boundary" value="true"/>
+    <param name="use_boundary" value="false"/>
     <param name="boundary_param" value="/boundary_loader/sim_enu_points"/>
   </node>
 

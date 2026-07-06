@@ -239,5 +239,6 @@
     <param name="active_scene_min_score" value="0.08"/>
     <param name="active_scene_sep_sigma_deg" value="6.0"/>
     <param name="w_active_scene_separation" value="2.0"/>
+    <param name="active_scene_base_fraction" value="0.3"/>
   </node>
 </launch>

@@ -77,9 +77,11 @@ class BoundaryLoader:
         rospy.set_param('/boundary_loader/sim_enu_points', sim_boundary)
         rospy.loginfo("Ordered ENU boundary points saved to /boundary_loader/enu_points")
 
-        # 6. 发布 Marker 用于 Rviz 可视化
-        self.marker_pub = rospy.Publisher('/boundary_loader/visualization', Marker,
-                                          queue_size=10, latch=True)
+        # 6. 发布 Marker 用于 Rviz 可视化（红蓝边界独立话题，便于 RViz 分别控制显示）
+        self.plan_marker_pub = rospy.Publisher('/boundary_loader/plan_visualization', Marker,
+                                               queue_size=10, latch=True)
+        self.sim_marker_pub = rospy.Publisher('/boundary_loader/sim_visualization', Marker,
+                                              queue_size=10, latch=True)
         self.plan_marker = None
         self.sim_marker = None
         self.publish_boundary_markers(ordered_enu, sim_boundary)
@@ -355,10 +357,11 @@ class BoundaryLoader:
             (0.45, 0.75, 1.0, self.sim_marker_alpha),
             sim_enu_points,
         )
-        self.marker_pub.publish(self.plan_marker)
-        self.marker_pub.publish(self.sim_marker)
+        self.plan_marker_pub.publish(self.plan_marker)
+        self.sim_marker_pub.publish(self.sim_marker)
 
-        rospy.loginfo("Plan and simulation boundary markers published to /boundary_loader/visualization")
+        rospy.loginfo("Plan boundary marker published to /boundary_loader/plan_visualization")
+        rospy.loginfo("Sim  boundary marker published to /boundary_loader/sim_visualization")
 
     def republish_boundary_markers(self, _event):
         """
@@ -371,8 +374,8 @@ class BoundaryLoader:
         stamp = rospy.Time.now()
         self.plan_marker.header.stamp = stamp
         self.sim_marker.header.stamp = stamp
-        self.marker_pub.publish(self.plan_marker)
-        self.marker_pub.publish(self.sim_marker)
+        self.plan_marker_pub.publish(self.plan_marker)
+        self.sim_marker_pub.publish(self.sim_marker)
 
 if __name__ == '__main__':
     try:

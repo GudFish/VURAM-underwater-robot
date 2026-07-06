@@ -122,6 +122,7 @@ class BeliefAwareMPCTracker:
         self.active_scene_min_score = float(rospy.get_param('~active_scene_min_score', 0.08))
         self.active_scene_sep_sigma_deg = float(rospy.get_param('~active_scene_sep_sigma_deg', 6.0))
         self.w_active_scene_separation = float(rospy.get_param('~w_active_scene_separation', 2.0))
+        self.active_scene_base_fraction = float(rospy.get_param('~active_scene_base_fraction', 0.25))
 
         dyn = rospy.get_param('~dynamics', {})
         self.m11 = float(dyn.get('m11', 40.0))
@@ -446,7 +447,8 @@ class BeliefAwareMPCTracker:
                 + (too_far / sonar_range_span) * (too_far / sonar_range_span)
             )
             j = j + self.w_sonar_front * (behind / max(self.sonar_min_range, 1e-3)) * (behind / max(self.sonar_min_range, 1e-3))
-            j = j + alpha * self.w_active_scene_separation * active_scene_overlap
+            alpha_sep = self.active_scene_base_fraction + (1.0 - self.active_scene_base_fraction) * alpha
+            j = j + alpha_sep * self.w_active_scene_separation * active_scene_overlap
 
             prev_u = u_cmd[_k]
             prev_v = v_cmd[_k]
