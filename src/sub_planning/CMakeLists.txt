@@ -169,12 +169,14 @@ catkin_install_python(PROGRAMS
   scripts/planners/mpc_2d_planner.py
   scripts/planners/mpc_dynamic_target_tracker.py
   scripts/planners/mpc_belief_target_tracker.py
+  scripts/planners/mpc_dynamic_target_tracker_recovery.py
+  scripts/planners/los_target_tracker.py
   scripts/sensors/acoustic_tdoa_sensor_sim.py
   scripts/sensors/tdoa_bearing_estimator.py
   scripts/sensors/forward_sonar_sim.py
   scripts/sensors/forward_sonar_target_detector.py
   scripts/visualization/target_belief_viz.py
-  scripts/estimators/target_bearing_estimator_ekf.py
+  scripts/estimators/target_pdaf_ekf.py
   scripts/estimators/target_bearing_window_ls.py
   scripts/demos/fossen_model_demo.py
   scripts/control/set_local_position.py

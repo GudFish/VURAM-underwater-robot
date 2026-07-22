@@ -1,5 +1,9 @@
 <?xml version="1.0"?>
 <launch>
+  <!-- ==================== 随机种子参数 ==================== -->
+  <!-- 非负整数种子用于场景复现；-1 表示不锁定随机序列。 -->
+  <arg name="random_seed" default="-1"/>
+
   <!-- ==================== 话题接口参数 ==================== -->
   <!-- 这一组参数定义声学仿真链路输入输出使用的话题名称。 -->
   <arg name="state_topic" default="/mavros/state"/>
@@ -22,6 +26,9 @@
   <!-- ==================== TDOA 传感器仿真节点 ==================== -->
   <!-- 这一组参数配置阵列基元布局以及 TDOA 声学量测的发布行为。 -->
   <node name="acoustic_tdoa_sensor_sim" pkg="sub_planning" type="acoustic_tdoa_sensor_sim.py" output="screen">
+    <!-- 随机种子参数：控制 TDOA 噪声与丢包的随机性。 -->
+    <param name="random_seed" value="$(arg random_seed)"/>
+
     <!-- 话题映射参数：连接机器人状态、目标位置和 TDOA 输出话题。 -->
     <param name="state_topic" value="$(arg state_topic)"/>
     <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>

@@ -1,5 +1,9 @@
 <?xml version="1.0"?>
 <launch>
+  <!-- ==================== 随机种子参数 ==================== -->
+  <!-- 非负整数种子用于场景复现；-1 表示不锁定随机序列。 -->
+  <arg name="random_seed" default="-1"/>
+
   <!-- ==================== 机器人初始化相关参数 ==================== -->
   <!-- 这一组参数控制目标是否优先在机器人附近生成，以及等待里程计的行为。 -->
   <arg name="robot_odom_topic" default="/mavros/local_position/odom"/>
@@ -20,7 +24,7 @@
   <!-- ==================== 障碍物场景参数 ==================== -->
   <!-- 这一组参数控制动态障碍物的数量、尺寸和运动范围。 -->
   <arg name="obstacle_marker_topic" default="/dynamic_obstacles/markers"/>
-  <arg name="obstacle_count" default="12"/>
+  <arg name="obstacle_count" default="18"/>
   <arg name="obstacle_size_min" default="0.6"/>
   <arg name="obstacle_size_max" default="1.0"/>
   <arg name="obstacle_speed_min" default="0.1"/>
@@ -29,6 +33,9 @@
   <!-- ==================== 动态目标生成节点 ==================== -->
   <!-- 这一组参数用于生成目标轨迹、目标网格和动态障碍物。 -->
   <node name="dynamic_target_generator" pkg="sub_planning" type="dynamic_target_generator.py" output="screen">
+    <!-- 随机种子参数：控制目标轨迹、障碍物布局的随机性。 -->
+    <param name="random_seed" value="$(arg random_seed)"/>
+
     <!-- 机器人与目标接口参数：连接里程计与目标位姿输出。 -->
     <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>
     <param name="target_pose_topic" value="$(arg target_pose_topic)"/>

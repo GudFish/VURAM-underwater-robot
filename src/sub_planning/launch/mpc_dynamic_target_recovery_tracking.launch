@@ -1,0 +1,136 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ==================== 传感器与显示开关 ==================== -->
+  <!-- 这一组参数控制前视声呐仿真和图像窗口是否启用。 -->
+  <arg name="forward_sonar" default="true"/>
+  <arg name="forward_sonar_window" default="false"/>
+  <arg name="forward_sonar_debug_window" default="false"/>
+
+  <!-- ==================== 随机种子 ==================== -->
+  <arg name="random_seed" default="-1"/>
+
+  <!-- ==================== 基础控制链路 ==================== -->
+  <!-- 启动飞控通信、速度控制与定深复用控制链路。 -->
+  <include file="$(find sub_planning)/launch/common_vehicle_control.launch">
+    <arg name="pos_ctrl" value="False"/>
+    <arg name="vel_ctrl_rate" value="20.0"/>
+    <arg name="depth_mux" value="True"/>
+    <arg name="input_vel_topic" value="/target_velocity_xy"/>
+    <arg name="output_vel_topic" value="/target_velocity"/>
+  </include>
+
+  <!-- ==================== 场景与传感链路 ==================== -->
+  <!-- 启动动态目标场景、声学方位链路和 belief 可视化。 -->
+  <include file="$(find sub_planning)/launch/dynamic_target.launch">
+    <arg name="random_seed" value="$(arg random_seed)"/>
+  </include>
+  <include file="$(find sub_planning)/launch/acoustic_tdoa_chain.launch">
+    <arg name="random_seed" value="$(arg random_seed)"/>
+  </include>
+  <include file="$(find sub_planning)/launch/target_belief_viz.launch"/>
+  <include if="$(arg forward_sonar)" file="$(find sub_planning)/launch/forward_sonar_sim.launch">
+    <arg name="show_window" value="$(arg forward_sonar_window)"/>
+    <arg name="random_seed" value="$(arg random_seed)"/>
+  </include>
+
+  <!-- ==================== 声呐目标检测（可复用 launch） ==================== -->
+  <include file="$(find sub_planning)/launch/sonar_target_detector.launch">
+    <arg name="enabled" value="$(arg forward_sonar)"/>
+    <arg name="debug_window" value="$(arg forward_sonar_debug_window)"/>
+  </include>
+
+  <!-- ==================== EKF 目标估计（可复用 launch） ==================== -->
+  <include file="$(find sub_planning)/launch/ekf_estimator.launch"/>
+
+  <!-- ==================== CE-NMPC + 脚本化恢复节点 ==================== -->
+  <!-- 基线方法 B3：确定性等价 NMPC 配合被动脚本化恢复。 -->
+  <node name="mpc_dynamic_target_tracker_recovery" pkg="sub_planning" type="mpc_dynamic_target_tracker_recovery.py" output="screen">
+    <!-- 动力学模型 -->
+    <rosparam command="load" file="$(find sub_planning)/config/fossen3_dynamics.yaml" ns="dynamics"/>
+
+    <!-- 话题接口 -->
+    <param name="odom_topic" value="/mavros/local_position/odom"/>
+    <param name="target_topic" value="/target_estimate/pose"/>
+    <param name="belief_topic" value="/target_estimate/belief"/>
+    <param name="bearing_topic" value="/target_acoustic_bearing"/>
+    <param name="vel_topic" value="/target_velocity_xy"/>
+    <param name="yaw_topic" value="/target_yaw"/>
+
+    <!-- MPC 时域参数（与 B1 和 proposed 一致） -->
+    <param name="control_rate" value="5.0"/>
+    <param name="mpc_dt" value="0.2"/>
+    <param name="horizon_steps" value="12"/>
+
+    <!-- 跟踪参数 -->
+    <param name="desired_standoff" value="3.0"/>
+    <param name="goal_tolerance" value="0.8"/>
+    <param name="use_goal_yaw" value="False"/>
+    <param name="yaw_switch_dist" value="1.5"/>
+
+    <!-- 控制约束 -->
+    <param name="u_max" value="0.8"/>
+    <param name="v_max" value="0.6"/>
+    <param name="r_max" value="0.6"/>
+    <param name="du_step_max" value="0.25"/>
+    <param name="dv_step_max" value="0.20"/>
+    <param name="dyaw_step_max" value="0.30"/>
+
+    <!-- 虚拟控制映射 -->
+    <param name="psi_kp" value="1.6"/>
+    <param name="k_tau_u" value="120.0"/>
+    <param name="k_tau_v" value="120.0"/>
+    <param name="k_tau_r" value="80.0"/>
+    <param name="tau_u_max" value="200.0"/>
+    <param name="tau_v_max" value="200.0"/>
+    <param name="tau_r_max" value="120.0"/>
+
+    <!-- 代价权重（与 B1 一致） -->
+    <param name="w_track" value="2.0"/>
+    <param name="w_terminal_track" value="10.0"/>
+    <param name="w_yaw" value="0.8"/>
+    <param name="w_ctrl" value="0.2"/>
+    <param name="w_sway" value="0.3"/>
+    <param name="w_du" value="0.6"/>
+    <param name="w_dyaw" value="0.4"/>
+    <param name="w_cte" value="2.5"/>
+
+    <!-- 声呐 FOV 约束（与 proposed 一致） -->
+    <param name="sonar_fov_deg" value="130.0"/>
+    <param name="sonar_min_range" value="0.2"/>
+    <param name="sonar_max_range" value="30.0"/>
+    <param name="w_sonar_fov" value="8.0"/>
+    <param name="w_sonar_range" value="2.0"/>
+    <param name="w_sonar_center" value="1.5"/>
+    <param name="w_sonar_front" value="4.0"/>
+
+    <!-- 边界约束 -->
+    <param name="boundary_param" value="/boundary_loader/enu_points"/>
+    <param name="boundary_margin" value="1.0"/>
+    <param name="boundary_wait_timeout" value="8.0"/>
+    <param name="boundary_required" value="true"/>
+
+    <!-- IPOPT 求解器 -->
+    <param name="ipopt_max_iter" value="80"/>
+    <param name="ipopt_tol" value="1e-3"/>
+
+    <!-- 跟踪丢失检测阈值 -->
+    <param name="cov_trace_threshold" value="10.0"/>
+    <param name="lost_track_missed_updates" value="5"/>
+    <param name="belief_timeout" value="1.0"/>
+
+    <!-- 恢复行为参数 -->
+    <param name="recovery_rotate_yaw_rate" value="0.30"/>
+    <param name="recovery_spiral_speed" value="0.20"/>
+    <param name="recovery_spiral_yaw_rate" value="0.15"/>
+    <param name="recovery_spiral_radius_growth" value="0.05"/>
+    <param name="recovery_bearing_search_speed" value="0.20"/>
+    <param name="recovery_bearing_search_lateral_gain" value="0.35"/>
+    <param name="recovery_max_duration" value="25.0"/>
+    <param name="recovery_mode_switch_time" value="12.0"/>
+    <param name="bearing_search_timeout" value="1.0"/>
+
+    <!-- 跟踪恢复判定阈值 -->
+    <param name="recovery_cov_trace_threshold" value="2.0"/>
+    <param name="recovery_min_consecutive_good" value="3"/>
+  </node>
+</launch>

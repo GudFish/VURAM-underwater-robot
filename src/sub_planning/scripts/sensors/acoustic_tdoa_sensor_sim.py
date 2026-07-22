@@ -30,6 +30,12 @@ class AcousticTDOASensorSim:
         """
         rospy.init_node('acoustic_tdoa_sensor_sim', anonymous=True)
 
+        # --- 随机种子（用于场景复现）---
+        random_seed = rospy.get_param('~random_seed', -1)
+        if random_seed >= 0:
+            random.seed(int(random_seed))
+            rospy.loginfo('[TDOASim] random seed set to %d', int(random_seed))
+
         self.state_topic = rospy.get_param('~state_topic', '/mavros/state')
         self.robot_odom_topic = rospy.get_param('~robot_odom_topic', '/mavros/local_position/odom')
         self.target_pose_topic = rospy.get_param('~target_pose_topic', '/dynamic_target/pose')

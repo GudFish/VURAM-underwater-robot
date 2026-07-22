@@ -5,6 +5,7 @@
 输出：发布目标、速度、偏航、障碍物或规划结果，并维护优化器内部状态。
 """
 import math
+import random
 
 import rospy
 import numpy as np
@@ -26,6 +27,14 @@ class DynamicTargetGenerator:
         输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
         """
         rospy.init_node('dynamic_target_generator')
+
+        # --- 随机种子（用于场景复现）---
+        random_seed = rospy.get_param('~random_seed', -1)
+        if random_seed >= 0:
+            np.random.seed(int(random_seed))
+            random.seed(int(random_seed))
+            rospy.loginfo('[DynamicTarget] random seed set to %d', int(random_seed))
+
         self.robot_odom_topic = rospy.get_param('~robot_odom_topic', '/mavros/local_position/odom')
         self.target_pose_topic = rospy.get_param('~target_pose_topic', '/dynamic_target/pose')
         self.target_marker_topic = rospy.get_param('~target_marker_topic', '/dynamic_target/marker')

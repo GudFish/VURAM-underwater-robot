@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-功能：定义二维匀速目标的 Bearing-only EKF 模型，供估计器节点复用。
+功能：定义二维匀速目标的 EKF 模型，支持纯方位更新、距离-方位联合更新
+      以及 PDAF（概率数据关联）多候选融合，供估计器节点复用。
 输入：通过函数参数或上层调用提供动力学、噪声和状态等模型输入。
 输出：返回模型计算结果，供规划器、估计器或演示脚本直接调用。
 """
@@ -11,17 +12,22 @@ import math
 import numpy as np
 
 
-class BearingOnlyCVEKF2D:
+class TargetTrackingEKF2D:
     """
-    功能：封装二维匀速目标的 Bearing-only EKF 状态、预测与量测更新逻辑。
-    输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
+    功能：封装二维匀速目标的 EKF 状态、预测与量测更新逻辑。
+          支持三种更新模式：
+            - update():              纯方位量测更新
+            - update_range_bearing(): 距离-方位联合量测更新
+            - update_range_bearing_pdaf(): PDAF 多候选融合更新
+    输入：构造阶段接收过程噪声对角阵、方位噪声方差和最小距离阈值。
     输出：初始化并维护该对象的运行状态，供后续回调、计算或消息发布流程使用。
     """
 
     def __init__(self, process_noise_diag, bearing_noise_var, min_range=0.25):
         """
-        功能：初始化当前对象，读取参数、创建订阅发布器并准备运行时状态。
-        输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
+        功能：初始化当前对象，设置过程噪声、量测噪声和最小距离参数。
+        输入：`process_noise_diag` 过程噪声对角元素、`bearing_noise_var` 方位量测噪声方差、
+              `min_range` 避免除零的最小距离。
         输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
         """
         self.x = np.zeros(4, dtype=float)
@@ -53,9 +59,9 @@ class BearingOnlyCVEKF2D:
 
     def predict(self, dt):
         """
-        功能：执行一步状态预测。
-        输入：`dt` 为该函数执行所需的输入参数。
-        输出：返回与该功能对应的计算结果。
+        功能：执行一步 CV 模型状态预测。
+        输入：`dt` 为时间步长。
+        输出：返回预测后的状态与协方差。
         """
         if not self.initialized:
             return self.x.copy(), self.P.copy()
@@ -89,9 +95,9 @@ class BearingOnlyCVEKF2D:
 
     def _linearize_bearing(self, observer_xy, observer_yaw):
         """
-        功能：线性化纯方位量测模型。
-        输入：`observer_xy`、`observer_yaw` 为该函数执行所需的输入参数。
-        输出：返回与该功能对应的计算结果。
+        功能：线性化纯方位量测模型，返回预测量测与雅可比矩阵。
+        输入：`observer_xy` 观测者位置、`observer_yaw` 观测者偏航角。
+        输出：返回 (预测量测, 1x4 雅可比行向量)。
         """
         ox, oy = float(observer_xy[0]), float(observer_xy[1])
         dx = self.x[0] - ox
@@ -104,8 +110,8 @@ class BearingOnlyCVEKF2D:
     def _linearize_range_bearing(self, observer_xy, observer_yaw):
         """
         功能：线性化距离加方位的联合量测模型。
-        输入：`observer_xy`、`observer_yaw` 为该函数执行所需的输入参数。
-        输出：返回与该功能对应的计算结果。
+        输入：`observer_xy` 观测者位置、`observer_yaw` 观测者偏航角。
+        输出：返回 (2 维预测量测, 2x4 雅可比矩阵)。
         """
         ox, oy = float(observer_xy[0]), float(observer_xy[1])
         dx = self.x[0] - ox
@@ -120,9 +126,9 @@ class BearingOnlyCVEKF2D:
 
     def _apply_update(self, h_mat, innovation, r_mat):
         """
-        功能：根据线性化结果执行一次卡尔曼更新。
-        输入：`h_mat`、`innovation`、`r_mat` 为该函数执行所需的输入参数。
-        输出：返回与该功能对应的计算结果。
+        功能：根据线性化结果执行一次标准卡尔曼更新。
+        输入：`h_mat` 雅可比矩阵、`innovation` 新息向量、`r_mat` 量测噪声协方差。
+        输出：返回更新后的状态、协方差和新息协方差 S。
         """
         s = h_mat.dot(self.P).dot(h_mat.T) + r_mat
         k = self.P.dot(h_mat.T).dot(np.linalg.inv(s))
@@ -135,9 +141,9 @@ class BearingOnlyCVEKF2D:
 
     def update(self, observer_xy, observer_yaw, measured_bearing):
         """
-        功能：使用单次方位量测更新滤波器状态。
+        功能：使用单次纯方位量测更新滤波器状态。
         输入：`observer_xy`、`observer_yaw`、`measured_bearing` 为该函数执行所需的输入参数。
-        输出：返回与该功能对应的计算结果。
+        输出：返回更新后的状态、协方差和标量新息。
         """
         x, p, innovation = self.update_multi([observer_xy], [observer_yaw], [measured_bearing])
         innovation_scalar = 0.0 if innovation.size == 0 else float(innovation[0])
@@ -145,9 +151,9 @@ class BearingOnlyCVEKF2D:
 
     def update_multi(self, observers_xy, observer_yaws, measured_bearings, bearing_noise_vars=None):
         """
-        功能：使用多条观测批量更新滤波器状态。
+        功能：使用多条方位观测批量更新滤波器状态。
         输入：`observers_xy`、`observer_yaws`、`measured_bearings`、`bearing_noise_vars` 为该函数执行所需的输入参数。
-        输出：返回与该功能对应的计算结果。
+        输出：返回更新后的状态、协方差和新息向量。
         """
         if not self.initialized:
             return self.x.copy(), self.P.copy(), np.zeros(0, dtype=float)
@@ -177,8 +183,9 @@ class BearingOnlyCVEKF2D:
     def update_range_bearing(self, observer_xy, observer_yaw, measured_range, measured_bearing, range_noise_var, bearing_noise_var):
         """
         功能：使用距离和方位联合量测更新滤波器状态。
-        输入：`observer_xy`、`observer_yaw`、`measured_range`、`measured_bearing`、`range_noise_var`、`bearing_noise_var` 为该函数执行所需的输入参数。
-        输出：返回与该功能对应的计算结果。
+        输入：`observer_xy`、`observer_yaw`、`measured_range`、`measured_bearing`、
+              `range_noise_var`、`bearing_noise_var` 为该函数执行所需的输入参数。
+        输出：返回更新后的状态、协方差和二维新息向量。
         """
         if not self.initialized:
             return self.x.copy(), self.P.copy(), np.zeros(2, dtype=float)
@@ -210,9 +217,11 @@ class BearingOnlyCVEKF2D:
         range_weight_power=1.0,
     ):
         """
-        功能：使用 PDAF 方式融合距离和方位候选量测。
-        输入：`observer_xy`、`observer_yaw`、`candidates`、`range_noise_var`、`bearing_noise_var`、`detection_probability`、`missed_weight`、`gate_chi2`、`min_beta_sum`、`range_weight_min`、`range_weight_power` 为该函数执行所需的输入参数。
-        输出：返回与该功能对应的计算结果。
+        功能：使用 PDAF 方式融合多个距离-方位候选量测。
+              包含 χ² 门控、似然加权关联概率、漏检权重和协方差扩散项修正。
+        输入：`observer_xy`、`observer_yaw`、`candidates`、`range_noise_var`、
+              `bearing_noise_var`、PDAF 关联参数。
+        输出：返回更新后的状态、协方差及详细 PDAF 调试信息字典。
         """
         if not self.initialized:
             return self.x.copy(), self.P.copy(), {
@@ -331,9 +340,9 @@ class BearingOnlyCVEKF2D:
 
     def measurement_stats(self, observer_xy, observer_yaw, measured_bearing):
         """
-        功能：计算当前量测对应的创新统计量。
+        功能：计算当前方位量测对应的新息统计量（NIS）。
         输入：`observer_xy`、`observer_yaw`、`measured_bearing` 为该函数执行所需的输入参数。
-        输出：返回量测相关的统计量。
+        输出：返回 (新息, 新息协方差, NIS) 三元组。
         """
         pred, h = self._linearize_bearing(observer_xy, observer_yaw)
         innovation = self.wrap_pi(float(measured_bearing) - pred)
@@ -345,8 +354,9 @@ class BearingOnlyCVEKF2D:
     def range_bearing_stats(self, observer_xy, observer_yaw, measured_range, measured_bearing, range_noise_var, bearing_noise_var):
         """
         功能：计算距离与方位联合量测的统计指标。
-        输入：`observer_xy`、`observer_yaw`、`measured_range`、`measured_bearing`、`range_noise_var`、`bearing_noise_var` 为该函数执行所需的输入参数。
-        输出：返回联合量测的统计量。
+        输入：`observer_xy`、`observer_yaw`、`measured_range`、`measured_bearing`、
+              `range_noise_var`、`bearing_noise_var` 为该函数执行所需的输入参数。
+        输出：返回 (二维新息, 2x2 新息协方差, NIS) 三元组。
         """
         pred, h_mat = self._linearize_range_bearing(observer_xy, observer_yaw)
         innovation = np.array(

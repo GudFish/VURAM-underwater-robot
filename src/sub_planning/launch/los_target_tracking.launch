@@ -1,0 +1,90 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ==================== 传感器与显示开关 ==================== -->
+  <!-- 这一组参数控制前视声呐仿真和图像窗口是否启用。 -->
+  <arg name="forward_sonar" default="true"/>
+  <arg name="forward_sonar_window" default="false"/>
+  <arg name="forward_sonar_debug_window" default="false"/>
+
+  <!-- ==================== 随机种子 ==================== -->
+  <arg name="random_seed" default="-1"/>
+
+  <!-- ==================== 基础控制链路 ==================== -->
+  <!-- 启动飞控通信、速度控制与定深复用控制链路。 -->
+  <include file="$(find sub_planning)/launch/common_vehicle_control.launch">
+    <arg name="pos_ctrl" value="False"/>
+    <arg name="vel_ctrl_rate" value="20.0"/>
+    <arg name="depth_mux" value="True"/>
+    <arg name="input_vel_topic" value="/target_velocity_xy"/>
+    <arg name="output_vel_topic" value="/target_velocity"/>
+  </include>
+
+  <!-- ==================== 场景与传感链路 ==================== -->
+  <!-- 启动动态目标场景、声学方位链路和 belief 可视化。 -->
+  <include file="$(find sub_planning)/launch/dynamic_target.launch">
+    <arg name="random_seed" value="$(arg random_seed)"/>
+  </include>
+  <include file="$(find sub_planning)/launch/acoustic_tdoa_chain.launch">
+    <arg name="random_seed" value="$(arg random_seed)"/>
+  </include>
+  <include file="$(find sub_planning)/launch/target_belief_viz.launch"/>
+  <include if="$(arg forward_sonar)" file="$(find sub_planning)/launch/forward_sonar_sim.launch">
+    <arg name="show_window" value="$(arg forward_sonar_window)"/>
+    <arg name="random_seed" value="$(arg random_seed)"/>
+  </include>
+
+  <!-- ==================== 声呐目标检测（可复用 launch） ==================== -->
+  <include file="$(find sub_planning)/launch/sonar_target_detector.launch">
+    <arg name="enabled" value="$(arg forward_sonar)"/>
+    <arg name="debug_window" value="$(arg forward_sonar_debug_window)"/>
+  </include>
+
+  <!-- ==================== EKF 目标估计（可复用 launch） ==================== -->
+  <include file="$(find sub_planning)/launch/ekf_estimator.launch"/>
+
+  <!-- ==================== LOS 制导跟踪节点 ==================== -->
+  <!-- 这一组参数用于配置基于视线法制导的目标跟踪器（基线方法 B2）。 -->
+  <node name="los_target_tracker" pkg="sub_planning" type="los_target_tracker.py" output="screen">
+    <!-- 话题接口参数 -->
+    <param name="odom_topic" value="/mavros/local_position/odom"/>
+    <param name="belief_topic" value="/target_estimate/belief"/>
+    <param name="bearing_topic" value="/target_acoustic_bearing"/>
+    <param name="vel_topic" value="/target_velocity_xy"/>
+    <param name="yaw_topic" value="/target_yaw"/>
+
+    <!-- 控制频率 -->
+    <param name="control_rate" value="5.0"/>
+
+    <!-- 跟踪目标参数 -->
+    <param name="desired_standoff" value="3.0"/>
+    <param name="goal_tolerance" value="0.8"/>
+
+    <!-- LOS 制导增益 -->
+    <param name="los_range_kp" value="0.5"/>
+    <param name="los_min_speed" value="0.10"/>
+    <param name="u_max" value="0.8"/>
+    <param name="v_max" value="0.3"/>
+
+    <!-- 自适应站位距离（与 proposed 方法使用相同的不确定度阈值） -->
+    <param name="use_adaptive_standoff" value="true"/>
+    <param name="exploration_standoff" value="4.5"/>
+    <param name="unc_low" value="1.0"/>
+    <param name="unc_high" value="8.0"/>
+    <param name="sigma_min" value="0.1"/>
+    <param name="unc_pos_gain" value="1.0"/>
+    <param name="unc_vel_gain" value="0.4"/>
+
+    <!-- 声呐 FOV 参数 -->
+    <param name="sonar_fov_deg" value="130.0"/>
+    <param name="sonar_max_range" value="30.0"/>
+
+    <!-- 搜索行为参数（与 proposed 方法一致） -->
+    <param name="search_enable" value="true"/>
+    <param name="search_forward_speed" value="0.15"/>
+    <param name="search_yaw_rate" value="0.25"/>
+    <param name="bearing_search_enable" value="true"/>
+    <param name="bearing_search_timeout" value="1.0"/>
+    <param name="bearing_search_forward_min_scale" value="0.25"/>
+    <param name="bearing_search_lateral_gain" value="0.35"/>
+  </node>
+</launch>

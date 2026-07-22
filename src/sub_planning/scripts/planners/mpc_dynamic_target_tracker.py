@@ -47,8 +47,18 @@ class DynamicTargetMPCTracker:
 
         self.odom_topic = rospy.get_param('~odom_topic', '/mavros/local_position/odom')
         self.target_topic = rospy.get_param('~target_topic', '/dynamic_target/pose')
+        self.bearing_topic = rospy.get_param('~bearing_topic', '/target_acoustic_bearing')
         self.vel_topic = rospy.get_param('~vel_topic', '/target_velocity')
         self.yaw_topic = rospy.get_param('~yaw_topic', '/target_yaw')
+
+        # --- 搜索行为参数（无目标时主动搜索，与 proposed 方法一致）---
+        self.search_enable = bool(rospy.get_param('~search_enable', True))
+        self.search_forward_speed = float(rospy.get_param('~search_forward_speed', 0.15))
+        self.search_yaw_rate = float(rospy.get_param('~search_yaw_rate', 0.25))
+        self.bearing_search_enable = bool(rospy.get_param('~bearing_search_enable', True))
+        self.bearing_search_timeout = float(rospy.get_param('~bearing_search_timeout', 1.0))
+        self.bearing_search_forward_min_scale = float(rospy.get_param('~bearing_search_forward_min_scale', 0.25))
+        self.bearing_search_lateral_gain = float(rospy.get_param('~bearing_search_lateral_gain', 0.35))
 
         self.control_rate = rospy.get_param('~control_rate', 5.0)
         self.dt = rospy.get_param('~mpc_dt', 0.20)
@@ -113,6 +123,8 @@ class DynamicTargetMPCTracker:
 
         self.have_odom = False
         self.have_target = False
+        self.latest_bearing = None
+        self.latest_bearing_stamp = None
         self.x = 0.0
         self.y = 0.0
         self.psi = 0.0
@@ -143,6 +155,7 @@ class DynamicTargetMPCTracker:
 
         self.odom_sub = rospy.Subscriber(self.odom_topic, Odometry, self.odom_cb, queue_size=1)
         self.target_sub = rospy.Subscriber(self.target_topic, PoseStamped, self.target_cb, queue_size=1)
+        self.bearing_sub = rospy.Subscriber(self.bearing_topic, Float32, self.bearing_cb, queue_size=10)
         self.vel_pub = rospy.Publisher(self.vel_topic, Twist, queue_size=10)
         self.yaw_pub = rospy.Publisher(self.yaw_topic, Float32, queue_size=10)
 
@@ -515,6 +528,60 @@ class DynamicTargetMPCTracker:
         self.vel_pub.publish(vel_msg)
         self.yaw_pub.publish(yaw_msg)
 
+    def bearing_cb(self, msg):
+        """
+        功能：缓存最新的声学方位角测量。
+        输入：`msg` 为 Float32 类型的 ROS 消息。
+        输出：无显式返回；更新内部状态。
+        """
+        self.latest_bearing = float(msg.data)
+        self.latest_bearing_stamp = rospy.Time.now()
+
+    def fresh_bearing(self):
+        """
+        功能：判断声学方位观测是否仍然有效。
+        输入：无显式输入参数。
+        输出：返回有效 bearing 值或 None。
+        """
+        if self.latest_bearing is None or self.latest_bearing_stamp is None:
+            return None
+        age = (rospy.Time.now() - self.latest_bearing_stamp).to_sec()
+        if age > max(self.bearing_search_timeout, 0.0):
+            return None
+        return self.latest_bearing
+
+    def publish_search_cmd(self):
+        """
+        功能：发布旋转搜索指令（无目标且无 bearing 时使用）。
+        """
+        yaw_cmd = wrap_pi(self.last_cmd_yaw + self.search_yaw_rate / max(self.control_rate, 1e-3))
+        vx_cmd = self._clip(self.search_forward_speed, -self.u_max, self.u_max)
+        self.last_cmd_u = vx_cmd
+        self.last_cmd_v = 0.0
+        self.last_cmd_yaw = yaw_cmd
+        self.publish_cmd(vx_cmd, 0.0, yaw_cmd)
+
+    def publish_bearing_search_cmd(self, bearing):
+        """
+        功能：发布方位制导搜索指令（有 bearing 但无目标估计时使用）。
+        输入：`bearing` 为机器人坐标系下的声学方位角。
+        """
+        world_bearing = wrap_pi(self.psi + bearing)
+        forward_scale = max(
+            self.bearing_search_forward_min_scale,
+            max(0.0, math.cos(bearing)),
+        )
+        vx_cmd = self._clip(self.search_forward_speed * forward_scale, -self.u_max, self.u_max)
+        vy_cmd = self._clip(
+            self.bearing_search_lateral_gain * self.search_forward_speed * math.sin(bearing),
+            -self.v_max,
+            self.v_max,
+        )
+        self.last_cmd_u = vx_cmd
+        self.last_cmd_v = vy_cmd
+        self.last_cmd_yaw = world_bearing
+        self.publish_cmd(vx_cmd, vy_cmd, world_bearing)
+
     def run(self):
         """
         功能：执行 `run` 对应的核心处理逻辑。
@@ -528,7 +595,13 @@ class DynamicTargetMPCTracker:
                 rate.sleep()
                 continue
             if not self.have_target:
-                rospy.logwarn_throttle(2.0, '[DynamicTargetMPC] waiting for target pose...')
+                rospy.logwarn_throttle(2.0, '[DynamicTargetMPC] waiting for target; running search behavior...')
+                if self.search_enable:
+                    bearing = self.fresh_bearing() if self.bearing_search_enable else None
+                    if bearing is None:
+                        self.publish_search_cmd()
+                    else:
+                        self.publish_bearing_search_cmd(bearing)
                 rate.sleep()
                 continue
             if not self._refresh_boundary_constraints():

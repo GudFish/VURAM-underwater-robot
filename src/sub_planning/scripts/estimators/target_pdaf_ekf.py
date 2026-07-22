@@ -2,9 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-功能：融合声学方位、前视声呐与里程计信息，使用 EKF 输出动态目标状态估计。
+功能：融合声学方位（TDOA）与前视声呐候选量测，使用 PDAF-EKF 输出动态目标状态估计。
+      支持纯方位更新、距离-方位联合更新和 PDAF 多候选融合，
+      将声学 bearing 作为门控参考筛选声呐候选后执行概率数据关联。
 输入：通过 ROS 参数以及里程计、方位、声呐等观测话题接收估计所需数据。
-输出：发布目标位姿、速度、belief 或调试消息，并维护估计器状态。
+输出：发布目标位姿、速度、belief 或 PDAF 调试消息，并维护估计器状态。
 """
 import sys
 from pathlib import Path
@@ -20,10 +22,10 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
-from models.bearing_only_ekf import BearingOnlyCVEKF2D
+from models.target_ekf import TargetTrackingEKF2D
 
 
-class TargetBearingEstimatorEKF:
+class TargetPDAFEKF:
     """
     功能：管理目标 EKF 的初始化、预测、更新以及估计结果发布流程。
     输入：构造阶段通常无显式位置参数，主要依赖 ROS 参数、订阅话题和内部成员状态。
@@ -35,7 +37,7 @@ class TargetBearingEstimatorEKF:
         输入：无显式构造参数；通过 ROS 参数、话题配置和成员变量完成初始化。
         输出：无显式返回；完成对象初始化、资源创建与成员状态准备。
         """
-        rospy.init_node('target_bearing_estimator_ekf', anonymous=True)
+        rospy.init_node('target_pdaf_ekf', anonymous=True)
 
         self.robot_odom_topic = rospy.get_param('~robot_odom_topic', '/mavros/local_position/odom')
         self.state_topic = rospy.get_param('~state_topic', '/mavros/state')
@@ -127,7 +129,7 @@ class TargetBearingEstimatorEKF:
         输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
         输出：返回初始化好的 EKF 实例。
         """
-        return BearingOnlyCVEKF2D(
+        return TargetTrackingEKF2D(
             process_noise_diag=self.process_noise_diag,
             bearing_noise_var=self.bearing_noise_std ** 2,
             min_range=self.min_bearing_range,
@@ -799,7 +801,7 @@ class TargetBearingEstimatorEKF:
 
 if __name__ == '__main__':
     try:
-        TargetBearingEstimatorEKF()
+        TargetPDAFEKF()
         rospy.spin()
     except rospy.ROSInterruptException:
         pass

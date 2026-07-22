@@ -33,6 +33,7 @@
 
     <!-- 话题接口参数：连接目标输入、机器人状态和控制输出接口。 -->
     <param name="target_topic" value="/target_estimate/pose"/>
+    <param name="bearing_topic" value="/target_acoustic_bearing"/>
     <param name="odom_topic" value="/mavros/local_position/odom"/>
     <param name="vel_topic" value="/target_velocity_xy"/>
     <param name="yaw_topic" value="/target_yaw"/>
@@ -47,6 +48,15 @@
     <param name="control_rate" value="5.0"/>
     <param name="mpc_dt" value="0.2"/>
     <param name="horizon_steps" value="12"/>
+
+    <!-- 搜索行为参数：无目标时主动搜索（与 proposed 方法一致）。 -->
+    <param name="search_enable" value="true"/>
+    <param name="search_forward_speed" value="0.15"/>
+    <param name="search_yaw_rate" value="0.25"/>
+    <param name="bearing_search_enable" value="true"/>
+    <param name="bearing_search_timeout" value="1.0"/>
+    <param name="bearing_search_forward_min_scale" value="0.25"/>
+    <param name="bearing_search_lateral_gain" value="0.35"/>
 
     <!-- 控制约束参数：限制速度和相邻控制步变化量。 -->
     <param name="du_step_max" value="0.25"/>

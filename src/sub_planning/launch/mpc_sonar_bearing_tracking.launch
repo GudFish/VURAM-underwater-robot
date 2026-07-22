@@ -91,7 +91,7 @@
 
   <!-- ==================== EKF 目标估计节点 ==================== -->
   <!-- 这一组参数用于融合声学方位与前视声呐量测，输出目标状态估计。 -->
-  <node name="target_bearing_estimator_ekf" pkg="sub_planning" type="target_bearing_estimator_ekf.py" output="screen">
+  <node name="target_pdaf_ekf" pkg="sub_planning" type="target_pdaf_ekf.py" output="screen">
     <!-- 话题接口参数：连接里程计、方位、声呐候选和估计输出接口。 -->
     <param name="robot_odom_topic" value="/mavros/local_position/odom"/>
     <param name="state_topic" value="/mavros/state"/>

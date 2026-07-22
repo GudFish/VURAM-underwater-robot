@@ -1,0 +1,307 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ====================================================================
+   target_tracking_simulation.launch
+   统一仿真实验入口：通过 method 参数切换不同跟踪方法。
+   所有方法共享相同的传感、估计与可视化链路，仅替换规划器节点。
+
+   用法示例：
+     roslaunch sub_planning target_tracking_simulation.launch method:=proposed random_seed:=42
+     roslaunch sub_planning target_tracking_simulation.launch method:=b1_ce_nmpc random_seed:=42
+     roslaunch sub_planning target_tracking_simulation.launch method:=b2_los random_seed:=42
+     roslaunch sub_planning target_tracking_simulation.launch method:=b3_ce_nmpc_recovery random_seed:=42
+
+   method 选项：
+     proposed              – Belief-aware MPC（本文提出的方法）
+     b1_ce_nmpc            – CE-NMPC（基线 B1：确定性等价 MPC，无信息代价）
+     b2_los                – LOS 制导（基线 B2：视线法 + PDAF-EKF）
+     b3_ce_nmpc_recovery   – CE-NMPC + 脚本化恢复（基线 B3：被动恢复策略）
+  ==================================================================== -->
+
+  <!-- ==================== 实验配置参数 ==================== -->
+  <!-- method: 跟踪方法 — proposed | b1_ce_nmpc | b2_los | b3_ce_nmpc_recovery -->
+  <arg name="method" default="proposed"/>
+  <!-- random_seed: 随机种子，>=0 锁定场景，-1 使用系统随机 -->
+  <arg name="random_seed" default="42"/>
+
+  <!-- ==================== 传感器与显示开关 ==================== -->
+  <arg name="forward_sonar" default="true"/>
+  <arg name="forward_sonar_window" default="false"/>
+  <arg name="forward_sonar_debug_window" default="true"/>
+
+  <!-- ====================================================================
+   ██████  共享链路：所有方法使用完全相同的传感与估计管道  ██████
+  ==================================================================== -->
+
+  <!-- ==================== 1. 基础控制链路 ==================== -->
+  <include file="$(find sub_planning)/launch/common_vehicle_control.launch">
+    <arg name="pos_ctrl" value="False"/>
+    <arg name="vel_ctrl_rate" value="20.0"/>
+    <arg name="depth_mux" value="True"/>
+    <arg name="input_vel_topic" value="/target_velocity_xy"/>
+    <arg name="output_vel_topic" value="/target_velocity"/>
+  </include>
+
+  <!-- ==================== 2. 动态目标场景 ==================== -->
+  <include file="$(find sub_planning)/launch/dynamic_target.launch">
+    <arg name="random_seed" value="$(arg random_seed)"/>
+  </include>
+
+  <!-- ==================== 3. 声学 TDOA 链路 ==================== -->
+  <include file="$(find sub_planning)/launch/acoustic_tdoa_chain.launch">
+    <arg name="random_seed" value="$(arg random_seed)"/>
+  </include>
+
+  <!-- ==================== 4. 目标 belief 可视化 ==================== -->
+  <include file="$(find sub_planning)/launch/target_belief_viz.launch"/>
+
+  <!-- ==================== 5. 前视声呐仿真 ==================== -->
+  <include if="$(arg forward_sonar)" file="$(find sub_planning)/launch/forward_sonar_sim.launch">
+    <arg name="show_window" value="$(arg forward_sonar_window)"/>
+    <arg name="random_seed" value="$(arg random_seed)"/>
+  </include>
+
+  <!-- ==================== 6. 声呐目标检测（可复用 launch） ==================== -->
+  <include file="$(find sub_planning)/launch/sonar_target_detector.launch">
+    <arg name="enabled" value="$(arg forward_sonar)"/>
+    <arg name="debug_window" value="$(arg forward_sonar_debug_window)"/>
+  </include>
+
+  <!-- ==================== 7. EKF 目标估计（可复用 launch，所有方法共用） ==================== -->
+  <include file="$(find sub_planning)/launch/ekf_estimator.launch"/>
+
+  <!-- ====================================================================
+   ██████  方法专属规划器：仅此部分根据 method 参数切换  ██████
+  ==================================================================== -->
+
+  <!-- ==================== Proposed: Belief-Aware MPC ==================== -->
+  <node if="$(eval method == 'proposed')" name="mpc_belief_target_tracker" pkg="sub_planning" type="mpc_belief_target_tracker.py" output="screen">
+    <rosparam command="load" file="$(find sub_planning)/config/fossen3_dynamics.yaml" ns="dynamics"/>
+    <param name="odom_topic" value="/mavros/local_position/odom"/>
+    <param name="belief_topic" value="/target_estimate/belief"/>
+    <param name="bearing_topic" value="/target_acoustic_bearing"/>
+    <param name="scene_candidate_topic" value="/forward_sonar/scene_candidates"/>
+    <param name="vel_topic" value="/target_velocity_xy"/>
+    <param name="yaw_topic" value="/target_yaw"/>
+    <param name="control_rate" value="5.0"/>
+    <param name="mpc_dt" value="0.2"/>
+    <param name="horizon_steps" value="12"/>
+    <param name="desired_standoff" value="3.0"/>
+    <param name="exploration_standoff" value="4.5"/>
+    <param name="goal_tolerance" value="0.8"/>
+    <param name="unc_low" value="1.0"/>
+    <param name="unc_high" value="8.0"/>
+    <param name="unc_pos_gain" value="1.0"/>
+    <param name="unc_vel_gain" value="0.4"/>
+    <param name="sigma_min" value="0.1"/>
+    <param name="w_sigma" value="1.2"/>
+    <param name="w_bearing_trace" value="1.2"/>
+    <param name="w_bearing_logdet" value="0.0"/>
+    <param name="bearing_noise_std" value="0.08"/>
+    <param name="bearing_process_pos" value="0.05"/>
+    <param name="bearing_process_vel" value="0.10"/>
+    <param name="min_bearing_range" value="0.5"/>
+    <param name="u_max" value="0.8"/>
+    <param name="v_max" value="0.6"/>
+    <param name="r_max" value="0.6"/>
+    <param name="du_step_max" value="0.25"/>
+    <param name="dv_step_max" value="0.20"/>
+    <param name="dyaw_step_max" value="0.30"/>
+    <param name="psi_kp" value="1.6"/>
+    <param name="k_tau_u" value="120.0"/>
+    <param name="k_tau_v" value="120.0"/>
+    <param name="k_tau_r" value="80.0"/>
+    <param name="tau_u_max" value="200.0"/>
+    <param name="tau_v_max" value="200.0"/>
+    <param name="tau_r_max" value="120.0"/>
+    <param name="w_track" value="2.0"/>
+    <param name="w_terminal_track" value="10.0"/>
+    <param name="w_yaw" value="0.8"/>
+    <param name="w_ctrl" value="0.2"/>
+    <param name="w_sway" value="0.3"/>
+    <param name="w_du" value="0.6"/>
+    <param name="w_dyaw" value="0.4"/>
+    <param name="w_cte" value="2.5"/>
+    <param name="sonar_fov_deg" value="130.0"/>
+    <param name="sonar_min_range" value="0.2"/>
+    <param name="sonar_max_range" value="30.0"/>
+    <param name="w_sonar_fov" value="8.0"/>
+    <param name="w_sonar_range" value="2.0"/>
+    <param name="w_sonar_center" value="1.5"/>
+    <param name="w_sonar_front" value="4.0"/>
+    <param name="boundary_param" value="/boundary_loader/enu_points"/>
+    <param name="boundary_margin" value="1.0"/>
+    <param name="boundary_wait_timeout" value="8.0"/>
+    <param name="boundary_required" value="true"/>
+    <param name="search_enable" value="true"/>
+    <param name="search_forward_speed" value="0.15"/>
+    <param name="search_yaw_rate" value="0.25"/>
+    <param name="bearing_search_enable" value="true"/>
+    <param name="bearing_search_timeout" value="1.0"/>
+    <param name="bearing_search_forward_min_scale" value="0.25"/>
+    <param name="bearing_search_lateral_gain" value="0.35"/>
+    <param name="active_scene_enable" value="true"/>
+    <param name="active_scene_timeout" value="0.8"/>
+    <param name="active_scene_max_points" value="8"/>
+    <param name="active_scene_min_score" value="0.08"/>
+    <param name="active_scene_sep_sigma_deg" value="6.0"/>
+    <param name="w_active_scene_separation" value="2.0"/>
+    <param name="active_scene_base_fraction" value="0.3"/>
+  </node>
+
+  <!-- ==================== B1: CE-NMPC 基线 ==================== -->
+  <node if="$(eval method == 'b1_ce_nmpc')" name="mpc_dynamic_target_tracker" pkg="sub_planning" type="mpc_dynamic_target_tracker.py" output="screen">
+    <rosparam command="load" file="$(find sub_planning)/config/fossen3_dynamics.yaml" ns="dynamics"/>
+    <param name="target_topic" value="/target_estimate/pose"/>
+    <param name="bearing_topic" value="/target_acoustic_bearing"/>
+    <param name="odom_topic" value="/mavros/local_position/odom"/>
+    <param name="vel_topic" value="/target_velocity_xy"/>
+    <param name="yaw_topic" value="/target_yaw"/>
+    <param name="desired_standoff" value="3.0"/>
+    <param name="goal_tolerance" value="0.8"/>
+    <param name="use_goal_yaw" value="False"/>
+    <param name="yaw_switch_dist" value="1.5"/>
+    <param name="control_rate" value="5.0"/>
+    <param name="mpc_dt" value="0.2"/>
+    <param name="horizon_steps" value="12"/>
+    <!-- 搜索行为参数（与 proposed 方法一致） -->
+    <param name="search_enable" value="true"/>
+    <param name="search_forward_speed" value="0.15"/>
+    <param name="search_yaw_rate" value="0.25"/>
+    <param name="bearing_search_enable" value="true"/>
+    <param name="bearing_search_timeout" value="1.0"/>
+    <param name="bearing_search_forward_min_scale" value="0.25"/>
+    <param name="bearing_search_lateral_gain" value="0.35"/>
+    <param name="du_step_max" value="0.25"/>
+    <param name="dv_step_max" value="0.20"/>
+    <param name="dyaw_step_max" value="0.30"/>
+    <param name="u_max" value="0.8"/>
+    <param name="v_max" value="0.6"/>
+    <param name="r_max" value="0.6"/>
+    <param name="psi_kp" value="1.6"/>
+    <param name="k_tau_u" value="120.0"/>
+    <param name="k_tau_v" value="120.0"/>
+    <param name="k_tau_r" value="80.0"/>
+    <param name="tau_u_max" value="200.0"/>
+    <param name="tau_v_max" value="200.0"/>
+    <param name="tau_r_max" value="120.0"/>
+    <param name="w_track" value="2.0"/>
+    <param name="w_terminal_track" value="10.0"/>
+    <param name="w_yaw" value="0.8"/>
+    <param name="w_ctrl" value="0.2"/>
+    <param name="w_sway" value="0.3"/>
+    <param name="w_du" value="0.6"/>
+    <param name="w_dyaw" value="0.4"/>
+    <param name="w_cte" value="2.5"/>
+    <param name="sonar_fov_deg" value="130.0"/>
+    <param name="sonar_min_range" value="0.2"/>
+    <param name="sonar_max_range" value="30.0"/>
+    <param name="w_sonar_fov" value="8.0"/>
+    <param name="w_sonar_range" value="2.0"/>
+    <param name="w_sonar_center" value="1.5"/>
+    <param name="w_sonar_front" value="4.0"/>
+    <param name="boundary_param" value="/boundary_loader/enu_points"/>
+    <param name="boundary_margin" value="1.0"/>
+    <param name="boundary_wait_timeout" value="8.0"/>
+    <param name="boundary_required" value="true"/>
+  </node>
+
+  <!-- ==================== B2: LOS 制导基线 ==================== -->
+  <node if="$(eval method == 'b2_los')" name="los_target_tracker" pkg="sub_planning" type="los_target_tracker.py" output="screen">
+    <param name="odom_topic" value="/mavros/local_position/odom"/>
+    <param name="belief_topic" value="/target_estimate/belief"/>
+    <param name="bearing_topic" value="/target_acoustic_bearing"/>
+    <param name="vel_topic" value="/target_velocity_xy"/>
+    <param name="yaw_topic" value="/target_yaw"/>
+    <param name="control_rate" value="5.0"/>
+    <param name="desired_standoff" value="3.0"/>
+    <param name="goal_tolerance" value="0.8"/>
+    <param name="los_range_kp" value="0.5"/>
+    <param name="los_min_speed" value="0.10"/>
+    <param name="u_max" value="0.8"/>
+    <param name="v_max" value="0.3"/>
+    <param name="use_adaptive_standoff" value="true"/>
+    <param name="exploration_standoff" value="4.5"/>
+    <param name="unc_low" value="1.0"/>
+    <param name="unc_high" value="8.0"/>
+    <param name="sigma_min" value="0.1"/>
+    <param name="unc_pos_gain" value="1.0"/>
+    <param name="unc_vel_gain" value="0.4"/>
+    <param name="sonar_fov_deg" value="130.0"/>
+    <param name="sonar_max_range" value="30.0"/>
+    <param name="search_enable" value="true"/>
+    <param name="search_forward_speed" value="0.15"/>
+    <param name="search_yaw_rate" value="0.25"/>
+    <param name="bearing_search_enable" value="true"/>
+    <param name="bearing_search_timeout" value="1.0"/>
+    <param name="bearing_search_forward_min_scale" value="0.25"/>
+    <param name="bearing_search_lateral_gain" value="0.35"/>
+  </node>
+
+  <!-- ==================== B3: CE-NMPC + 脚本化恢复基线 ==================== -->
+  <node if="$(eval method == 'b3_ce_nmpc_recovery')" name="mpc_dynamic_target_tracker_recovery" pkg="sub_planning" type="mpc_dynamic_target_tracker_recovery.py" output="screen">
+    <rosparam command="load" file="$(find sub_planning)/config/fossen3_dynamics.yaml" ns="dynamics"/>
+    <param name="odom_topic" value="/mavros/local_position/odom"/>
+    <param name="target_topic" value="/target_estimate/pose"/>
+    <param name="belief_topic" value="/target_estimate/belief"/>
+    <param name="bearing_topic" value="/target_acoustic_bearing"/>
+    <param name="vel_topic" value="/target_velocity_xy"/>
+    <param name="yaw_topic" value="/target_yaw"/>
+    <param name="control_rate" value="5.0"/>
+    <param name="mpc_dt" value="0.2"/>
+    <param name="horizon_steps" value="12"/>
+    <param name="desired_standoff" value="3.0"/>
+    <param name="goal_tolerance" value="0.8"/>
+    <param name="use_goal_yaw" value="False"/>
+    <param name="yaw_switch_dist" value="1.5"/>
+    <param name="u_max" value="0.8"/>
+    <param name="v_max" value="0.6"/>
+    <param name="r_max" value="0.6"/>
+    <param name="du_step_max" value="0.25"/>
+    <param name="dv_step_max" value="0.20"/>
+    <param name="dyaw_step_max" value="0.30"/>
+    <param name="psi_kp" value="1.6"/>
+    <param name="k_tau_u" value="120.0"/>
+    <param name="k_tau_v" value="120.0"/>
+    <param name="k_tau_r" value="80.0"/>
+    <param name="tau_u_max" value="200.0"/>
+    <param name="tau_v_max" value="200.0"/>
+    <param name="tau_r_max" value="120.0"/>
+    <param name="w_track" value="2.0"/>
+    <param name="w_terminal_track" value="10.0"/>
+    <param name="w_yaw" value="0.8"/>
+    <param name="w_ctrl" value="0.2"/>
+    <param name="w_sway" value="0.3"/>
+    <param name="w_du" value="0.6"/>
+    <param name="w_dyaw" value="0.4"/>
+    <param name="w_cte" value="2.5"/>
+    <param name="sonar_fov_deg" value="130.0"/>
+    <param name="sonar_min_range" value="0.2"/>
+    <param name="sonar_max_range" value="30.0"/>
+    <param name="w_sonar_fov" value="8.0"/>
+    <param name="w_sonar_range" value="2.0"/>
+    <param name="w_sonar_center" value="1.5"/>
+    <param name="w_sonar_front" value="4.0"/>
+    <param name="boundary_param" value="/boundary_loader/enu_points"/>
+    <param name="boundary_margin" value="1.0"/>
+    <param name="boundary_wait_timeout" value="8.0"/>
+    <param name="boundary_required" value="true"/>
+    <param name="ipopt_max_iter" value="80"/>
+    <param name="ipopt_tol" value="1e-3"/>
+    <param name="cov_trace_threshold" value="10.0"/>
+    <param name="lost_track_missed_updates" value="5"/>
+    <param name="belief_timeout" value="1.0"/>
+    <param name="recovery_rotate_yaw_rate" value="0.30"/>
+    <param name="recovery_spiral_speed" value="0.20"/>
+    <param name="recovery_spiral_yaw_rate" value="0.15"/>
+    <param name="recovery_spiral_radius_growth" value="0.05"/>
+    <param name="recovery_bearing_search_speed" value="0.20"/>
+    <param name="recovery_bearing_search_lateral_gain" value="0.35"/>
+    <param name="recovery_max_duration" value="25.0"/>
+    <param name="recovery_mode_switch_time" value="12.0"/>
+    <param name="bearing_search_timeout" value="1.0"/>
+    <param name="recovery_cov_trace_threshold" value="2.0"/>
+    <param name="recovery_min_consecutive_good" value="3"/>
+  </node>
+
+</launch>

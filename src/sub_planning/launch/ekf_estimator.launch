@@ -1,0 +1,105 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ====================================================================
+   ekf_estimator.launch
+   可复用的 PDAF-EKF 目标状态估计器启动文件。
+   融合声学方位（TDOA）与前视声呐候选量测，输出目标位姿/速度和 belief。
+   在所有跟踪方法中作为共享估计管道的一部分被引用。
+  ==================================================================== -->
+
+  <!-- ==================== 话题接口参数 ==================== -->
+  <arg name="robot_odom_topic" default="/mavros/local_position/odom"/>
+  <arg name="state_topic" default="/mavros/state"/>
+  <arg name="bearing_topic" default="/target_acoustic_bearing"/>
+  <arg name="sonar_measurement_topic" default="/forward_sonar/measurement"/>
+  <arg name="sonar_candidates_topic" default="/forward_sonar/candidates"/>
+  <arg name="target_pose_topic" default="/target_estimate/pose"/>
+  <arg name="target_twist_topic" default="/target_estimate/twist"/>
+  <arg name="belief_topic" default="/target_estimate/belief"/>
+  <arg name="pdaf_debug_topic" default="/target_estimate/pdaf_debug"/>
+
+  <!-- ==================== 滤波频率与观测噪声参数 ==================== -->
+  <arg name="filter_rate" default="10.0"/>
+  <arg name="bearing_noise_std" default="0.08"/>
+  <arg name="sonar_range_noise_std" default="0.75"/>
+  <arg name="sonar_bearing_noise_std" default="0.08"/>
+
+  <!-- ==================== 声呐候选门控参数 ==================== -->
+  <arg name="sonar_min_score" default="0.15"/>
+  <arg name="sonar_max_uncertainty" default="0.75"/>
+  <arg name="sonar_uncertainty_noise_scale" default="6.0"/>
+  <arg name="sonar_measurement_timeout" default="0.5"/>
+  <arg name="sonar_candidate_timeout" default="0.5"/>
+  <arg name="acoustic_measurement_timeout" default="0.5"/>
+
+  <!-- ==================== PDAF 关联参数 ==================== -->
+  <arg name="pda_detection_probability" default="0.85"/>
+  <arg name="pda_missed_weight" default="0.20"/>
+  <arg name="pda_gate_chi2" default="9.21"/>
+  <arg name="pda_min_beta_sum" default="0.05"/>
+  <arg name="pda_max_candidates" default="12"/>
+  <arg name="pda_range_weight_min" default="0.35"/>
+  <arg name="pda_range_weight_power" default="1.0"/>
+  <arg name="bearing_candidate_gate_deg" default="12.0"/>
+
+  <!-- ==================== 初始化策略参数 ==================== -->
+  <arg name="prefer_sonar_init" default="true"/>
+  <arg name="allow_bearing_only_init" default="false"/>
+  <arg name="min_bearing_range" default="0.25"/>
+  <arg name="init_range" default="8.0"/>
+  <arg name="init_range_var" default="36.0"/>
+  <arg name="init_cross_range_var" default="4.0"/>
+  <arg name="use_prior_init" default="false"/>
+  <arg name="reset_on_disarm" default="true"/>
+
+  <!-- ==================== EKF 目标估计节点 ==================== -->
+  <node name="target_pdaf_ekf" pkg="sub_planning" type="target_pdaf_ekf.py" output="screen">
+    <!-- 话题接口参数 -->
+    <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>
+    <param name="state_topic" value="$(arg state_topic)"/>
+    <param name="bearing_topic" value="$(arg bearing_topic)"/>
+    <param name="sonar_measurement_topic" value="$(arg sonar_measurement_topic)"/>
+    <param name="sonar_candidates_topic" value="$(arg sonar_candidates_topic)"/>
+    <param name="target_pose_topic" value="$(arg target_pose_topic)"/>
+    <param name="target_twist_topic" value="$(arg target_twist_topic)"/>
+    <param name="belief_topic" value="$(arg belief_topic)"/>
+    <param name="pdaf_debug_topic" value="$(arg pdaf_debug_topic)"/>
+
+    <!-- 滤波频率与观测噪声参数 -->
+    <param name="filter_rate" value="$(arg filter_rate)"/>
+    <param name="bearing_noise_std" value="$(arg bearing_noise_std)"/>
+    <param name="sonar_range_noise_std" value="$(arg sonar_range_noise_std)"/>
+    <param name="sonar_bearing_noise_std" value="$(arg sonar_bearing_noise_std)"/>
+
+    <!-- 声呐候选门控参数 -->
+    <param name="sonar_min_score" value="$(arg sonar_min_score)"/>
+    <param name="sonar_max_uncertainty" value="$(arg sonar_max_uncertainty)"/>
+    <param name="sonar_uncertainty_noise_scale" value="$(arg sonar_uncertainty_noise_scale)"/>
+    <param name="sonar_measurement_timeout" value="$(arg sonar_measurement_timeout)"/>
+    <param name="sonar_candidate_timeout" value="$(arg sonar_candidate_timeout)"/>
+    <param name="acoustic_measurement_timeout" value="$(arg acoustic_measurement_timeout)"/>
+
+    <!-- PDAF 关联参数 -->
+    <param name="pda_detection_probability" value="$(arg pda_detection_probability)"/>
+    <param name="pda_missed_weight" value="$(arg pda_missed_weight)"/>
+    <param name="pda_gate_chi2" value="$(arg pda_gate_chi2)"/>
+    <param name="pda_min_beta_sum" value="$(arg pda_min_beta_sum)"/>
+    <param name="pda_max_candidates" value="$(arg pda_max_candidates)"/>
+    <param name="pda_range_weight_min" value="$(arg pda_range_weight_min)"/>
+    <param name="pda_range_weight_power" value="$(arg pda_range_weight_power)"/>
+    <param name="bearing_candidate_gate_deg" value="$(arg bearing_candidate_gate_deg)"/>
+
+    <!-- 初始化策略参数 -->
+    <param name="prefer_sonar_init" value="$(arg prefer_sonar_init)"/>
+    <param name="allow_bearing_only_init" value="$(arg allow_bearing_only_init)"/>
+    <param name="min_bearing_range" value="$(arg min_bearing_range)"/>
+    <rosparam param="process_noise_diag">[0.4, 0.4, 0.8, 0.8]</rosparam>
+    <rosparam param="init_mean">[8.0, 0.0, 0.3, 0.0]</rosparam>
+    <rosparam param="init_cov_diag">[36.0, 9.0, 2.0, 2.0]</rosparam>
+    <param name="init_range" value="$(arg init_range)"/>
+    <param name="init_range_var" value="$(arg init_range_var)"/>
+    <param name="init_cross_range_var" value="$(arg init_cross_range_var)"/>
+    <param name="use_prior_init" value="$(arg use_prior_init)"/>
+    <param name="reset_on_disarm" value="$(arg reset_on_disarm)"/>
+  </node>
+</launch>
