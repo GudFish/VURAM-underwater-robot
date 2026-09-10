@@ -38,6 +38,7 @@ class ForwardSonarTargetDetector:
         self.measurement_topic = rospy.get_param('~measurement_topic', '/forward_sonar/measurement')
         self.candidate_topic = rospy.get_param('~candidate_topic', '/forward_sonar/candidates')
         self.scene_candidate_topic = rospy.get_param('~scene_candidate_topic', '/forward_sonar/scene_candidates')
+        self.obstacle_topic = rospy.get_param('~obstacle_topic', '/forward_sonar/obstacles')
         self.debug_topic = rospy.get_param('~debug_topic', '/forward_sonar/detection_debug')
         self.debug_image_topic = rospy.get_param('~debug_image_topic', '/forward_sonar/debug_image')
 
@@ -52,6 +53,10 @@ class ForwardSonarTargetDetector:
         self.max_candidates = int(rospy.get_param('~max_candidates', 12))
         self.publish_scene_candidates = rospy.get_param('~publish_scene_candidates', True)
         self.max_scene_candidates = int(rospy.get_param('~max_scene_candidates', 16))
+        self.max_obstacles = int(rospy.get_param('~max_obstacles', 8))
+        self.obstacle_min_score = float(rospy.get_param('~obstacle_min_score', 0.04))
+        self.obstacle_min_radius = float(rospy.get_param('~obstacle_min_radius', 0.20))
+        self.obstacle_max_range = float(rospy.get_param('~obstacle_max_range', 12.0))
         self.bearing_candidate_gate_deg = float(rospy.get_param('~bearing_candidate_gate_deg', 12.0))
         self.publish_candidates_without_bearing = rospy.get_param('~publish_candidates_without_bearing', True)
         self.publish_legacy_measurement = rospy.get_param('~publish_legacy_measurement', False)
@@ -76,6 +81,19 @@ class ForwardSonarTargetDetector:
         self.near_noise_min_area = int(rospy.get_param('~near_noise_min_area', 32))
         self.near_noise_min_physical_length_m = float(rospy.get_param('~near_noise_min_physical_length_m', 0.45))
 
+        # 可选预处理参数（离线批量标注工具同款，默认关闭保持原行为）
+        self.denoise_method = rospy.get_param('~denoise_method', 'none')
+        self.range_norm_enabled = rospy.get_param('~range_norm_enabled', False)
+        self.range_norm_smooth = int(rospy.get_param('~range_norm_smooth', 15))
+        # 区域级检测模式：整片连通亮区（默认关闭，走原小斑块+PDAF 流程）
+        self.use_region_detection = rospy.get_param('~use_region_detection', False)
+        self.region_threshold_percentile = float(rospy.get_param('~region_threshold_percentile', 93.0))
+        self.region_min_threshold = float(rospy.get_param('~region_min_threshold', 40.0))
+        self.region_min_blob_area = int(rospy.get_param('~region_min_blob_area', 300))
+        self.region_max_blob_area = int(rospy.get_param('~region_max_blob_area', 3000))
+        self.region_max_range = float(rospy.get_param('~region_max_range', 25.0))
+        self.region_near_gain = float(rospy.get_param('~region_near_gain', 1.0))
+
         self.kernel = np.ones((3, 3), dtype=np.uint8)
         self.latest_bearing = None
         self.latest_bearing_stamp = None
@@ -90,6 +108,7 @@ class ForwardSonarTargetDetector:
         self.measurement_pub = rospy.Publisher(self.measurement_topic, Float32MultiArray, queue_size=10)
         self.candidate_pub = rospy.Publisher(self.candidate_topic, Float32MultiArray, queue_size=10)
         self.scene_candidate_pub = rospy.Publisher(self.scene_candidate_topic, Float32MultiArray, queue_size=10)
+        self.obstacle_pub = rospy.Publisher(self.obstacle_topic, Float32MultiArray, queue_size=10)
         self.debug_pub = rospy.Publisher(self.debug_topic, Float32MultiArray, queue_size=10)
         self.debug_image_pub = rospy.Publisher(self.debug_image_topic, Image, queue_size=2)
 
@@ -133,6 +152,7 @@ class ForwardSonarTargetDetector:
         image = np.frombuffer(msg.data, dtype=np.uint8).reshape((msg.height, msg.width))
         bearing = self.valid_guidance_bearing(log_warnings=False)
 
+        image = self.preprocess_image(image)
         blurred = cv2.GaussianBlur(image, (5, 5), 0)
         footprint_mask = self.valid_mask(msg.height, msg.width)
         valid_pixels = blurred[footprint_mask]
@@ -159,13 +179,22 @@ class ForwardSonarTargetDetector:
             binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, self.kernel)
 
         background_level = float(np.median(valid_pixels))
-        scene_candidates, candidate_suppressed = self.extract_candidates(
-            image, binary, threshold_map, background_level, None, self.max_scene_candidates
-        )
+        if self.use_region_detection:
+            scene_candidates = self.detect_regions(image, footprint_mask)
+            candidate_suppressed = []
+        else:
+            scene_candidates, candidate_suppressed = self.extract_candidates(
+                image, binary, threshold_map, background_level, None, self.max_scene_candidates
+            )
         suppressed.extend(candidate_suppressed)
         if self.publish_scene_candidates:
             self.publish_candidates(scene_candidates, self.scene_candidate_pub)
+        obstacle_candidates = self.extract_obstacle_candidates(
+            image, binary, threshold_map, background_level
+        )
+        self.publish_obstacles(obstacle_candidates)
 
+        # 区域检测与斑点检测均做声学方位门控（无有效方位时退化为全量候选）
         candidates = self.filter_candidates_for_pdaf(scene_candidates, bearing)
         self.publish_debug_image(msg, image, candidates, bearing, suppressed, scene_candidates)
 
@@ -194,6 +223,150 @@ class ForwardSonarTargetDetector:
             float(len(suppressed)),
         ]
         self.debug_pub.publish(debug_msg)
+
+    def preprocess_image(self, image):
+        """
+        功能：检测前的可选预处理——去噪与去等距弧形条带（参数默认关闭时原样返回）。
+        输入：`image` 为单通道声呐图像（第 0 行为最远距离的节点坐标系）。
+        输出：返回预处理后的图像。
+        """
+        processed = image
+        if self.denoise_method == 'median':
+            processed = cv2.medianBlur(processed, 3)
+        elif self.denoise_method == 'gaussian':
+            processed = cv2.GaussianBlur(processed, (5, 5), 0)
+        elif self.denoise_method == 'bilateral':
+            processed = cv2.bilateralFilter(processed, 5, 25, 25)
+        if self.range_norm_enabled:
+            processed = self.remove_range_arcs(processed)
+        return processed
+
+    def remove_range_arcs(self, image, mask=None):
+        """
+        功能：去除等距弧形噪声条带——按距离环估计背景亮度（环上像素的中值，
+              目标只占少数方位角，中值近似纯背景），平滑后从图像中相减。
+        输入：`image` 为单通道声呐图像（扇形原点位于底部中心的节点坐标系），
+              `mask` 为可选附加有效掩膜（默认使用视场 wedge 与最大量程圆）。
+        输出：返回去除弧形条带后的图像。
+        """
+        height, width = image.shape[:2]
+        cx = width // 2
+        apex_y = height - 1
+        yy, xx = np.mgrid[0:height, 0:width]
+        radius = np.hypot(xx - cx, yy - apex_y).astype(np.int32)
+        valid = (radius >= 0) & (radius <= height) & self.valid_mask(height, width)
+        if mask is not None:
+            valid &= mask
+        flat_r = radius[valid]
+        flat_v = image[valid].astype(np.float32)
+        if flat_r.size == 0:
+            return image
+
+        num_bins = height + 1
+        counts = np.bincount(flat_r, minlength=num_bins)
+        # 按 (半径, 亮度) 二级排序: 同一环内亮度升序, 便于取中值
+        order = np.lexsort((flat_v, flat_r))
+        v_sorted = flat_v[order]
+        cum = np.cumsum(counts)
+        nonzero = counts > 0
+        # 每个距离环的精确中值: 奇数个取中间元素, 偶数个取中间两元素的平均
+        upper = cum - counts + counts // 2
+        lower = np.where((counts % 2 == 0) & nonzero, upper - 1, upper)
+        ring_median = np.zeros(num_bins, dtype=np.float32)
+        ring_median[nonzero] = (v_sorted[upper[nonzero]] + v_sorted[lower[nonzero]]) * 0.5
+        # 填充无像素的距离环（线性插值）并平滑背景剖面，避免过拟合真实目标
+        valid_idx = np.nonzero(nonzero)[0]
+        ring_median = np.interp(np.arange(num_bins), valid_idx, ring_median[valid_idx])
+        window = max(int(self.range_norm_smooth), 1)
+        kernel = np.ones(window, np.float32) / window
+        ring_bg = np.convolve(ring_median, kernel, mode='same')
+
+        bg_map = ring_bg[np.clip(radius, 0, height)]
+        result = image.astype(np.float32) - bg_map
+        return np.clip(result, 0.0, 255.0).astype(np.uint8)
+
+    def detect_regions(self, image, footprint_mask):
+        """
+        功能：区域级检测——全局阈值 + 连通域提取整片亮区（离线批量工具同款）。
+        输入：`image` 为预处理后的单通道图像，`footprint_mask` 为有效区域掩膜。
+        输出：返回候选区域列表（与 extract_candidates 相同的关键字段），
+              按权重降序：权重 = 区域平均亮度 * (1 + near_gain * (1 - 量程/最大量程))。
+        """
+        height, width = image.shape[:2]
+        blurred = cv2.GaussianBlur(image, (5, 5), 0)
+        valid_pixels = blurred[footprint_mask]
+        if valid_pixels.size == 0:
+            return []
+
+        threshold = max(
+            self.region_min_threshold,
+            float(np.percentile(valid_pixels, np.clip(self.region_threshold_percentile, 0.0, 100.0))),
+        )
+        binary = np.zeros_like(blurred, dtype=np.uint8)
+        binary[(blurred >= threshold) & footprint_mask] = 255
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+
+        background_level = float(np.median(valid_pixels))
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+        regions = []
+        for label_idx in range(1, num_labels):
+            area = int(stats[label_idx, cv2.CC_STAT_AREA])
+            if area < self.region_min_blob_area:
+                continue
+            if self.region_max_blob_area > 0 and area > self.region_max_blob_area:
+                continue
+
+            component_mask = labels == label_idx
+            bbox = (
+                int(stats[label_idx, cv2.CC_STAT_LEFT]),
+                int(stats[label_idx, cv2.CC_STAT_TOP]),
+                int(stats[label_idx, cv2.CC_STAT_WIDTH]),
+                int(stats[label_idx, cv2.CC_STAT_HEIGHT]),
+            )
+            shape = self.component_shape_metrics(component_mask, bbox, area, height, width)
+            pixels = image[component_mask].astype(np.float32)
+            rows, cols = np.nonzero(component_mask)
+            weights = pixels + 1.0e-3
+            weight_sum = float(np.sum(weights))
+            row = float(np.dot(rows.astype(np.float32), weights) / max(weight_sum, 1.0e-6))
+            col = float(np.dot(cols.astype(np.float32), weights) / max(weight_sum, 1.0e-6))
+            detection = self.row_col_to_measurement(row, col, height, width)
+            if self.region_max_range > 0.0 and detection['range'] > self.region_max_range:
+                continue
+
+            mean_intensity = float(np.mean(pixels))
+            near_weight = 1.0 + max(self.region_near_gain, 0.0) * max(
+                0.0, 1.0 - detection['range'] / max(self.max_range, 1.0e-6))
+            weight = mean_intensity * near_weight
+            score = float(np.clip(weight / max(255.0 * (1.0 + max(self.region_near_gain, 0.0)), 1.0e-6), 0.0, 1.0))
+            mean_contrast = mean_intensity - background_level
+            uncertainty = self.estimate_candidate_uncertainty(score, max(mean_contrast, 0.0), -1.0)
+
+            regions.append({
+                'label': int(label_idx),
+                'area': area,
+                'row': row,
+                'col': col,
+                'score': score,
+                'intensity_sum': float(np.sum(pixels)),
+                'mean_contrast': float(mean_contrast),
+                'peak_intensity': float(np.max(pixels)),
+                'excess_score': score,
+                'uncertainty': uncertainty,
+                'bearing_error': -1.0,
+                'threshold': float(threshold),
+                'range': detection['range'],
+                'bearing': detection['bearing'],
+                'forward': detection['forward'],
+                'lateral': detection['lateral'],
+                'bbox': bbox,
+                'shape': shape,
+                'weight': float(weight),
+            })
+        regions.sort(key=lambda item: item['weight'], reverse=True)
+        return regions
 
     def valid_guidance_bearing(self, log_warnings=True):
         """
@@ -389,6 +562,7 @@ class ForwardSonarTargetDetector:
                     'forward': detection['forward'],
                     'lateral': detection['lateral'],
                     'bbox': bbox,
+                    'shape': shape,
                 }
             )
 
@@ -594,6 +768,37 @@ class ForwardSonarTargetDetector:
             )
         msg.data = data
         publisher.publish(msg)
+
+    def publish_obstacles(self, candidates):
+        """Publish image-derived occupancy blobs; this path never uses simulator markers."""
+        obstacles = []
+        for item in candidates:
+            if item['range'] > self.obstacle_max_range or item['score'] < self.obstacle_min_score:
+                continue
+            shape = item.get('shape', {})
+            radius = max(self.obstacle_min_radius, 0.5 * shape.get('physical_length_m', 0.0))
+            obstacles.append((item['range'], item['bearing'], radius, item['score']))
+        obstacles.sort(key=lambda item: item[0])
+        msg = Float32MultiArray()
+        msg.data = [float(min(len(obstacles), self.max_obstacles))]
+        for rng, bearing, radius, confidence in obstacles[:self.max_obstacles]:
+            msg.data.extend([float(rng), float(bearing), float(radius), float(confidence), 0.0])
+        self.obstacle_pub.publish(msg)
+
+    def extract_obstacle_candidates(self, image, binary, threshold_map, background_level):
+        """Keep near and extended echo blobs for occupancy, unlike the PDAF target path."""
+        old_boundary = self.suppress_boundary_like_blobs
+        old_near = self.suppress_near_noise_blobs
+        self.suppress_boundary_like_blobs = False
+        self.suppress_near_noise_blobs = False
+        try:
+            candidates, _ = self.extract_candidates(
+                image, binary, threshold_map, background_level, None, self.max_obstacles
+            )
+        finally:
+            self.suppress_boundary_like_blobs = old_boundary
+            self.suppress_near_noise_blobs = old_near
+        return candidates
 
     def publish_legacy_best_measurement(self, candidates):
         """

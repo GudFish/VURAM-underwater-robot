@@ -11,17 +11,19 @@
 import sys
 from pathlib import Path
 import math
+import time
 import casadi as ca
 import rospy
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Float32MultiArray
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
 from utils.boundary_constraints import load_boundary_halfspaces
+from utils.sonar_obstacle_avoidance import SonarObstacleAvoidance
 
 
 def wrap_pi(angle):
@@ -193,6 +195,7 @@ class RecoveringDynamicTargetMPCTracker:
         self.boundary_halfspaces = []
         self.boundary_ready = False
         self.boundary_wait_start = rospy.Time.now()
+        self.avoidance = SonarObstacleAvoidance()
 
         # NLP 求解器
         self.solver = None
@@ -209,6 +212,7 @@ class RecoveringDynamicTargetMPCTracker:
         self.recovery_mode = 'rotate'  # 'rotate' | 'spiral' | 'bearing_search'
         self.recovery_start_time = None
         self.recovery_mode_start_time = None
+        self.recovery_count = 0
         self.consecutive_missed = 0
         self.consecutive_good = 0
         self.spiral_accumulated_angle = 0.0
@@ -222,6 +226,8 @@ class RecoveringDynamicTargetMPCTracker:
         # --- 发布者 ---
         self.vel_pub = rospy.Publisher(self.vel_topic, Twist, queue_size=10)
         self.yaw_pub = rospy.Publisher(self.yaw_topic, Float32, queue_size=10)
+        self.solver_time_pub = rospy.Publisher('/planner/solver_time', Float32MultiArray, queue_size=10)
+        self.recovery_status_pub = rospy.Publisher('/planner/recovery_status', Float32MultiArray, queue_size=10)
 
         rospy.loginfo('[RecoveryMPC] started. belief topic: %s', self.belief_topic)
 
@@ -281,10 +287,12 @@ class RecoveringDynamicTargetMPCTracker:
         yaw_cmd = ca.SX.sym('Y', self.N)
         w = ca.vertcat(u_cmd, v_cmd, yaw_cmd)
 
-        p = ca.SX.sym('P', 13)
+        obstacle_slots = max(self.avoidance.max_obstacles, 0)
+        p = ca.SX.sym('P', 13 + 4 * obstacle_slots)
         rx = p[0]; ry = p[1]; rpsi = p[2]; ru = p[3]; rv = p[4]; rr = p[5]
         tx = p[6]; ty = p[7]; gyaw = p[8]
         prev_u = p[9]; prev_v = p[10]; prev_yaw = p[11]; use_gyaw = p[12]
+        obstacle_base = 13
 
         m = ca.DM([[self.m11, 0.0, 0.0], [0.0, self.m22, self.m23], [0.0, self.m23, self.m33]])
         m_inv = ca.inv(m)
@@ -383,6 +391,11 @@ class RecoveringDynamicTargetMPCTracker:
             for nx, ny, c_boundary in self.boundary_halfspaces:
                 g.append(nx * rx + ny * ry)
                 lbg.append(c_boundary); ubg.append(ca.inf)
+            for idx in range(obstacle_slots):
+                base = obstacle_base + 4 * idx
+                ox, oy, safe_radius, active = p[base], p[base + 1], p[base + 2], p[base + 3]
+                g.append((rx - ox) * (rx - ox) + (ry - oy) * (ry - oy) - active * safe_radius * safe_radius)
+                lbg.append(0.0); ubg.append(ca.inf)
 
         # 终端代价
         term_dx = tx - rx; term_dy = ty - ry
@@ -561,6 +574,30 @@ class RecoveringDynamicTargetMPCTracker:
         self.consecutive_good = 0
         self.spiral_accumulated_angle = 0.0
 
+    def _next_recovery_mode(self, current_mode):
+        """Return the next available recovery behavior in a cyclic sequence."""
+        modes = ['rotate', 'spiral']
+        if self.is_bearing_fresh():
+            modes.append('bearing_search')
+        if current_mode not in modes:
+            return modes[0]
+        return modes[(modes.index(current_mode) + 1) % len(modes)]
+
+    def publish_recovery_status(self):
+        """Publish [active, mode, elapsed_s, recovery_count] for evaluation."""
+        mode_codes = {'rotate': 1.0, 'spiral': 2.0, 'bearing_search': 3.0}
+        elapsed = 0.0
+        if self.track_lost and self.recovery_start_time is not None:
+            elapsed = max(0.0, (rospy.Time.now() - self.recovery_start_time).to_sec())
+        msg = Float32MultiArray()
+        msg.data = [
+            1.0 if self.track_lost else 0.0,
+            mode_codes.get(self.recovery_mode, 0.0) if self.track_lost else 0.0,
+            elapsed,
+            float(self.recovery_count),
+        ]
+        self.recovery_status_pub.publish(msg)
+
     # ========================================================================
     #  恢复行为执行
     # ========================================================================
@@ -569,19 +606,15 @@ class RecoveringDynamicTargetMPCTracker:
         """
         功能：根据当前恢复模式生成控制指令。
         """
-        mode = self.recovery_mode
-
         # 定期切换恢复模式以避免卡死
         if self.recovery_mode_start_time is not None:
             mode_elapsed = (rospy.Time.now() - self.recovery_mode_start_time).to_sec()
             if mode_elapsed > self.recovery_mode_switch_time:
-                modes = ['rotate', 'spiral']
-                if self.is_bearing_fresh():
-                    modes.append('bearing_search')
-                self.recovery_mode = mode
+                self.recovery_mode = self._next_recovery_mode(self.recovery_mode)
                 self.recovery_mode_start_time = rospy.Time.now()
                 rospy.loginfo('[RecoveryMPC] switching recovery mode to: %s', self.recovery_mode)
 
+        mode = self.recovery_mode
         if mode == 'rotate':
             self._recovery_rotate()
         elif mode == 'spiral':
@@ -680,17 +713,31 @@ class RecoveringDynamicTargetMPCTracker:
             self.target_x, self.target_y, self.target_yaw,
             self.last_cmd_u, self.last_cmd_v, self.last_cmd_yaw,
             1.0 if self.use_goal_yaw else 0.0,
-        ]
+        ] + [value for item in self.avoidance.obstacles_world(self.x, self.y, self.psi) for value in item]
 
         args = {'x0': x0, 'lbx': self.lbx, 'ubx': self.ubx, 'lbg': self.lbg, 'ubg': self.ubg, 'p': p}
         if self.last_lam_x is not None and self.last_lam_g is not None:
             args['lam_x0'] = self.last_lam_x
             args['lam_g0'] = self.last_lam_g
 
+        t_start = time.time()
         sol = self.solver(**args)
+        solver_ms = 1000.0 * (time.time() - t_start)
         w_opt = sol['x'].full().flatten().tolist()
         self.last_lam_x = sol['lam_x']
         self.last_lam_g = sol['lam_g']
+
+        # 发布求解耗时
+        try:
+            stats = self.solver.stats()
+            iters = stats.get('iter_count', 0)
+            feasible = 1.0 if stats.get('return_status', '') == 'Solve_Succeeded' else 0.0
+        except Exception:
+            iters = 0
+            feasible = 1.0
+        tm_msg = Float32MultiArray()
+        tm_msg.data = [float(solver_ms), float(iters), feasible]
+        self.solver_time_pub.publish(tm_msg)
 
         self.U_init = w_opt[0:self.N]
         self.V_init = w_opt[self.N:2 * self.N]
@@ -702,6 +749,7 @@ class RecoveringDynamicTargetMPCTracker:
     # ========================================================================
 
     def publish_cmd(self, vx_body, vy_body, yaw):
+        vx_body, vy_body, yaw, _ = self.avoidance.filter_command(vx_body, vy_body, yaw, self.u_max, self.v_max)
         vel_msg = Twist()
         vel_msg.linear.x = vx_body
         vel_msg.linear.y = vy_body
@@ -751,6 +799,7 @@ class RecoveringDynamicTargetMPCTracker:
                     self.recovery_start_time = rospy.Time.now()
                     self.recovery_mode = self.select_recovery_mode()
                     self.recovery_mode_start_time = rospy.Time.now()
+                    self.recovery_count += 1
                     self._reset_warm_start()
                     rospy.logwarn(
                         '[RecoveryMPC] TRACK LOST! cov_trace=%.2f, mode=%s',
@@ -785,6 +834,7 @@ class RecoveringDynamicTargetMPCTracker:
                             continue
 
                     self.execute_recovery()
+                    self.publish_recovery_status()
 
                     rospy.loginfo_throttle(
                         2.0,
@@ -807,6 +857,7 @@ class RecoveringDynamicTargetMPCTracker:
             self.last_cmd_v = vy_cmd
             self.last_cmd_yaw = yaw_cmd
             self.publish_cmd(vx_cmd, vy_cmd, yaw_cmd)
+            self.publish_recovery_status()
 
             d = math.hypot(self.target_x - self.x, self.target_y - self.y)
             if reached:

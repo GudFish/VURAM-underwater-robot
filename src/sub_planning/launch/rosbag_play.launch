@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ====================================================================
+   rosbag_play.launch
+   直接回放 bagfiles 目录下（或指定路径）的某个 bag 文件。
+
+   用法：
+     # 回放 bagfiles 目录下的文件（只写文件名即可）
+     roslaunch sub_planning rosbag_play.launch bag:=proposed_seed42_ts_xxx.bag
+     # 指定完整路径
+     roslaunch sub_planning rosbag_play.launch bag:=/tmp/其他目录/xxx.bag
+     # 2 倍速回放
+     roslaunch sub_planning rosbag_play.launch rate:=2 bag:=proposed_seed42_ts_xxx.bag
+     # 回放同时弹出前视声呐检测 debug 窗口（bag 需含 /forward_sonar/image）
+     roslaunch sub_planning rosbag_play.launch bag:=proposed_seed42_ts_xxx.bag sonar_debug:=true
+
+   参数：
+     bag        – bag 文件名（默认查找 ~/ardupilot_ws/bagfiles/）或完整路径
+     rate       – 回放倍速（默认 1.0）
+     loop       – 是否循环回放（默认 false）
+     clock      – 是否发布 /clock 仿真时钟（默认 true；回放时消费者需
+                  设置 use_sim_time=true，本 launch 已自动设置）
+     sonar_debug – 是否启动声呐检测 debug 窗口（默认 false；与
+                  target_tracking_simulation.launch 的
+                  forward_sonar_debug_window 相同，需 bag 由
+                  bag_images:=true 录制以包含 /forward_sonar/image）
+  ==================================================================== -->
+
+  <arg name="bag" default=""/>
+  <arg name="rate" default="1.0"/>
+  <arg name="loop" default="false"/>
+  <arg name="clock" default="true"/>
+  <arg name="sonar_debug" default="false"/>
+
+  <!-- bag 路径解析：自动补全 .bag 后缀；非绝对路径时自动前缀 ~/ardupilot_ws/bagfiles/ -->
+  <arg name="bag_file_resolved"
+       value="$(eval arg('bag') if arg('bag').endswith('.bag') else arg('bag') + '.bag')"/>
+  <arg name="bag_path"
+       value="$(eval arg('bag_file_resolved') if arg('bag_file_resolved').startswith('/') else env('HOME') + '/ardupilot_ws/bagfiles/' + arg('bag_file_resolved'))"/>
+  <!-- 条件开关：先解析为字符串再拼入节点参数 -->
+  <arg name="clock_flag" value="$(eval '--clock' if arg('clock') else '')"/>
+  <arg name="loop_flag" value="$(eval '--loop' if arg('loop') else '')"/>
+
+  <!-- 使用仿真时钟：下游节点以 bag 中的时间为准 -->
+  <param if="$(arg clock)" name="/use_sim_time" value="true"/>
+
+  <!-- RViz 可视化（机器人模型 + TF） -->
+  <include file="$(find sub_planning)/launch/rviz.launch"/>
+
+  <!-- 目标 belief 可视化（协方差椭圆），订阅 bag 中的 /target_estimate/belief -->
+  <include file="$(find sub_planning)/launch/target_belief_viz.launch"/>
+
+  <!-- 声呐检测 debug 窗口（可选）：重放 /forward_sonar/image 并运行检测器，
+       弹出与 target_tracking_simulation.launch 相同的检测叠加窗口 -->
+  <include if="$(arg sonar_debug)" file="$(find sub_planning)/launch/sonar_target_detector.launch">
+    <arg name="enabled" value="true"/>
+    <arg name="debug_window" value="true"/>
+  </include>
+
+  <node pkg="rosbag" type="play" name="rosbag_play" output="screen" required="true"
+        args="$(arg bag_path) $(arg clock_flag) $(arg loop_flag) --rate $(arg rate)"/>
+</launch>

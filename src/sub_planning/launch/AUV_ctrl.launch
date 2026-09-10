@@ -4,6 +4,8 @@
   <!-- 控制控制模式选择与底层速度指令的发布频率。 -->
   <arg name="pos_ctrl" default="False" doc="true for position control, false for velocity control"/>
   <arg name="vel_ctrl_rate" default="20.0" doc="publish rate of body velocity and yaw setpoints"/>
+  <!-- show_rviz: 是否启动 RViz 可视化（批量实验设为 false 以节省内存/GPU） -->
+  <arg name="show_rviz" default="true"/>
 
   <!-- ==================== 基础飞控链路 ==================== -->
   <!-- 启动 MAVROS 与飞控通信链路。 -->
@@ -76,6 +78,6 @@
   </node>
 
   <!-- ==================== 可视化 ==================== -->
-  <!-- 启动 RViz、模型发布和 TF 广播链路。 -->
-  <include file="$(find sub_planning)/launch/rviz.launch"/>
+  <!-- 启动 RViz、模型发布和 TF 广播链路（批量实验可关闭）。 -->
+  <include if="$(arg show_rviz)" file="$(find sub_planning)/launch/rviz.launch"/>
 </launch>

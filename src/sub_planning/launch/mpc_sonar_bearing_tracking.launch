@@ -240,5 +240,7 @@
     <param name="active_scene_sep_sigma_deg" value="6.0"/>
     <param name="w_active_scene_separation" value="2.0"/>
     <param name="active_scene_base_fraction" value="0.3"/>
+    <param name="active_scene_bearing_focus_deg" value="12.0"/>
+    <param name="active_scene_bearing_focus_gain" value="3.0"/>
   </node>
 </launch>

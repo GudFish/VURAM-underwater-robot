@@ -34,3 +34,8 @@ dist/
 *~
 .DS_Store
 *.tex
+
+# AI config
+.agents/
+.claude/
+.codex/

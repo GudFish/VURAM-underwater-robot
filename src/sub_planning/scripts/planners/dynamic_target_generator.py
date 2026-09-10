@@ -10,6 +10,7 @@ import random
 import rospy
 import numpy as np
 from geometry_msgs.msg import PoseStamped
+from mavros_msgs.msg import State
 from nav_msgs.msg import Odometry
 from shapely.geometry import Point, Polygon
 from visualization_msgs.msg import Marker, MarkerArray
@@ -29,11 +30,22 @@ class DynamicTargetGenerator:
         rospy.init_node('dynamic_target_generator')
 
         # --- 随机种子（用于场景复现）---
+        # 使用两条独立随机流：
+        #   rng_init   – 初始位置采样与障碍物创建（拒绝采样次数可变）
+        #   rng_motion – 目标/障碍物运动演化（每循环固定消耗，保证确定性）
+        # 两者互不影响：即使初始采样的拒绝次数因机器人位置微差而变化，
+        # 运动随机序列仍然完全一致。
         random_seed = rospy.get_param('~random_seed', -1)
         if random_seed >= 0:
-            np.random.seed(int(random_seed))
-            random.seed(int(random_seed))
-            rospy.loginfo('[DynamicTarget] random seed set to %d', int(random_seed))
+            seed = int(random_seed)
+            np.random.seed(seed)
+            random.seed(seed)
+            self.rng_init = np.random.RandomState(seed)
+            self.rng_motion = np.random.RandomState(seed)
+            rospy.loginfo('[DynamicTarget] random seed set to %d', seed)
+        else:
+            self.rng_init = np.random
+            self.rng_motion = np.random
 
         self.robot_odom_topic = rospy.get_param('~robot_odom_topic', '/mavros/local_position/odom')
         self.target_pose_topic = rospy.get_param('~target_pose_topic', '/dynamic_target/pose')
@@ -62,6 +74,15 @@ class DynamicTargetGenerator:
         self.have_robot_odom = False
         self.robot_xy = np.array([0.0, 0.0], dtype=float)
         self.odom_sub = rospy.Subscriber(self.robot_odom_topic, Odometry, self.odom_cb, queue_size=1)
+
+        # --- 运动启动控制：等待飞控解锁后再开始目标/障碍物运动 ---
+        self.mavros_state_topic = rospy.get_param('~mavros_state_topic', '/mavros/state')
+        self.motion_start_on_arm = bool(rospy.get_param('~motion_start_on_arm', True))
+        self.arm_wait_timeout = float(rospy.get_param('~arm_wait_timeout', 120.0))
+        self.armed = False
+        self.motion_started = False
+        self.arm_wait_start = None
+        self.arm_timeout_fallback_logged = False
         
         # --- 等待边界参数加载完成 ---
         timeout = rospy.Duration(60.0)  # 最长等待30秒
@@ -94,10 +115,14 @@ class DynamicTargetGenerator:
         
         # 运动参数
         # 使用平滑的“速度 + 航向角 + 转率”模型，避免布朗式抖动轨迹。
-        self.speed_min = 0.25
-        self.speed_max = 0.75
-        self.speed = np.random.uniform(0.35, 0.55)
-        self.heading = np.random.uniform(-math.pi, math.pi)
+        # 机动切换采用迭代计数而非墙钟时间，保证运动序列完全确定性。
+        # 速度范围可在 launch 中通过 target_speed_min / target_speed_max 配置
+        self.speed_min = max(0.05, float(rospy.get_param('~target_speed_min', 0.25)))
+        self.speed_max = max(self.speed_min + 0.05, float(rospy.get_param('~target_speed_max', 0.75)))
+        init_lo = min(self.speed_min + 0.10, self.speed_max)
+        init_hi = max(self.speed_max - 0.20, self.speed_min)
+        self.speed = self.rng_motion.uniform(min(init_lo, init_hi), max(init_lo, init_hi))
+        self.heading = self.rng_motion.uniform(-math.pi, math.pi)
         self.turn_rate = 0.0
         self.speed_tau = 2.5
         self.turn_tau = 4.0
@@ -106,8 +131,8 @@ class DynamicTargetGenerator:
         self.max_turn_rate = 0.32
         self.boundary_margin = 2.0
         self.maneuver_mode = 'straight'
-        self.mode_change_time = rospy.Time.now()
-        self.mode_duration = rospy.Duration(np.random.uniform(4.0, 8.0))
+        self.mode_duration = self.rng_motion.uniform(4.0, 8.0)
+        self.mode_steps_remaining = int(round(self.mode_duration * 10.0))
         self.mode_target_speed = self.speed
         self.mode_target_turn_rate = 0.0
         self.velocity = np.array(
@@ -121,6 +146,9 @@ class DynamicTargetGenerator:
         self.obstacle_pub = rospy.Publisher(self.obstacle_marker_topic, MarkerArray, queue_size=10)
         self.obstacles = self.create_obstacles()
         self.rate = rospy.Rate(10)  # 10 Hz
+
+        # 飞控状态订阅（用于在 ARM 上升沿启动运动）
+        self.state_sub = rospy.Subscriber(self.mavros_state_topic, State, self.state_cb, queue_size=1)
         
         rospy.loginfo("动态目标生成器已启动，边界内初始位置: (%.2f, %.2f)", self.pos[0], self.pos[1])
 
@@ -132,6 +160,42 @@ class DynamicTargetGenerator:
         """
         self.robot_xy = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y], dtype=float)
         self.have_robot_odom = True
+
+    def state_cb(self, msg):
+        """
+        功能：监听飞控状态，在 ARM 上升沿启动目标与障碍物运动。
+        输入：`msg` 为 mavros_msgs/State 类型的 ROS 消息。
+        输出：无显式返回；通过更新内部状态或维护对象成员完成功能。
+        """
+        was_armed = self.armed
+        self.armed = msg.armed
+        if not was_armed and msg.armed:
+            # ARM 上升沿：运动时钟起点（与 metrics_logger 的 t_sec=0 对齐）
+            self.motion_started = True
+            rospy.loginfo('[DynamicTarget] vehicle ARMED — target/obstacle motion started')
+
+    def motion_enabled(self):
+        """
+        功能：判断当前是否允许目标与障碍物运动。
+        输入：无显式输入参数；依赖对象缓存状态与参数配置。
+        输出：返回布尔值，True 表示运动已启动。
+        """
+        if not self.motion_start_on_arm:
+            return True
+        if self.armed:
+            return True
+        # 回退：超过等待时间仍未 ARM 时自动开始运动（非 MAVROS 场景）
+        if self.arm_wait_start is not None and self.arm_wait_timeout >= 0:
+            elapsed = (rospy.Time.now() - self.arm_wait_start).to_sec()
+            if elapsed > self.arm_wait_timeout:
+                if not self.arm_timeout_fallback_logged:
+                    rospy.logwarn(
+                        '[DynamicTarget] no ARM after %.1fs — starting motion anyway (fallback)',
+                        self.arm_wait_timeout,
+                    )
+                    self.arm_timeout_fallback_logged = True
+                return True
+        return False
 
     def wait_for_robot_odom(self):
         """
@@ -153,15 +217,17 @@ class DynamicTargetGenerator:
             rospy.loginfo_throttle(2.0, "[DynamicTarget] waiting for robot odom: %s", self.robot_odom_topic)
             rate.sleep()
 
-    def sample_global_position(self):
+    def sample_global_position(self, rng=None):
         """
         功能：在允许区域内采样一个全局位置。
-        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输入：`rng` 可选随机数发生器，缺省使用初始化随机流 rng_init。
         输出：返回与该功能对应的计算结果。
         """
+        if rng is None:
+            rng = self.rng_init
         min_x, min_y, max_x, max_y = self.boundary_polygon.bounds
         while not rospy.is_shutdown():
-            pos = np.array([np.random.uniform(min_x, max_x), np.random.uniform(min_y, max_y)], dtype=float)
+            pos = np.array([rng.uniform(min_x, max_x), rng.uniform(min_y, max_y)], dtype=float)
             if self.boundary_polygon.contains(Point(pos)):
                 return pos
         return np.array([0.0, 0.0], dtype=float)
@@ -180,8 +246,8 @@ class DynamicTargetGenerator:
         r_min = max(0.0, min(self.init_min_radius, self.init_max_radius))
         r_max = max(r_min, self.init_max_radius)
         for _ in range(max(self.init_sample_attempts, 1)):
-            radius = math.sqrt(np.random.uniform(r_min * r_min, r_max * r_max))
-            angle = np.random.uniform(-math.pi, math.pi)
+            radius = math.sqrt(self.rng_init.uniform(r_min * r_min, r_max * r_max))
+            angle = self.rng_init.uniform(-math.pi, math.pi)
             pos = self.robot_xy + radius * np.array([math.cos(angle), math.sin(angle)], dtype=float)
             if self.boundary_polygon.contains(Point(pos)):
                 rospy.loginfo(
@@ -236,25 +302,29 @@ class DynamicTargetGenerator:
         """
         modes = ['straight', 'turn_left', 'turn_right', 'accelerate', 'decelerate']
         weights = np.array([0.52, 0.12, 0.12, 0.14, 0.10], dtype=float)
-        self.maneuver_mode = np.random.choice(modes, p=weights / np.sum(weights))
-        self.mode_change_time = rospy.Time.now()
-        self.mode_duration = rospy.Duration(np.random.uniform(4.0, 8.0))
+        self.maneuver_mode = self.rng_motion.choice(modes, p=weights / np.sum(weights))
+        self.mode_duration = self.rng_motion.uniform(4.0, 8.0)
+        self.mode_steps_remaining = int(round(self.mode_duration * 10.0))
 
         if self.maneuver_mode == 'straight':
             self.mode_target_turn_rate = 0.0
-            self.mode_target_speed = np.clip(self.speed + np.random.uniform(-0.03, 0.06), self.speed_min, self.speed_max)
+            self.mode_target_speed = np.clip(self.speed + self.rng_motion.uniform(-0.03, 0.06), self.speed_min, self.speed_max)
         elif self.maneuver_mode == 'turn_left':
-            self.mode_target_turn_rate = np.random.uniform(0.10, 0.22)
-            self.mode_target_speed = np.clip(self.speed + np.random.uniform(-0.04, 0.02), self.speed_min, self.speed_max)
+            self.mode_target_turn_rate = self.rng_motion.uniform(0.10, 0.22)
+            self.mode_target_speed = np.clip(self.speed + self.rng_motion.uniform(-0.04, 0.02), self.speed_min, self.speed_max)
         elif self.maneuver_mode == 'turn_right':
-            self.mode_target_turn_rate = -np.random.uniform(0.10, 0.22)
-            self.mode_target_speed = np.clip(self.speed + np.random.uniform(-0.04, 0.02), self.speed_min, self.speed_max)
+            self.mode_target_turn_rate = -self.rng_motion.uniform(0.10, 0.22)
+            self.mode_target_speed = np.clip(self.speed + self.rng_motion.uniform(-0.04, 0.02), self.speed_min, self.speed_max)
         elif self.maneuver_mode == 'accelerate':
-            self.mode_target_turn_rate = np.random.uniform(-0.05, 0.05)
-            self.mode_target_speed = np.random.uniform(max(self.speed, 0.50), self.speed_max)
+            self.mode_target_turn_rate = self.rng_motion.uniform(-0.05, 0.05)
+            # 加速目标速度下限随速度范围缩放（默认 0.25+0.25=0.50，与原行为一致）
+            accel_lo = min(self.speed_min + 0.25, self.speed_max)
+            self.mode_target_speed = self.rng_motion.uniform(max(self.speed, accel_lo), self.speed_max)
         else:
-            self.mode_target_turn_rate = np.random.uniform(-0.05, 0.05)
-            self.mode_target_speed = np.random.uniform(self.speed_min, min(self.speed, 0.40))
+            self.mode_target_turn_rate = self.rng_motion.uniform(-0.05, 0.05)
+            # 减速目标速度上限随速度范围缩放（默认 0.75-0.35=0.40，与原行为一致）
+            decel_hi = max(self.speed_max - 0.35, self.speed_min)
+            self.mode_target_speed = self.rng_motion.uniform(self.speed_min, min(self.speed, decel_hi))
     
     def update_position(self, dt):
         """
@@ -272,8 +342,10 @@ class DynamicTargetGenerator:
             0.0,
             1.0,
         )
-        if rospy.Time.now() - self.mode_change_time > self.mode_duration:
+        # 机动切换使用迭代计数（10Hz 固定步长），不受墙钟抖动影响
+        if self.mode_steps_remaining <= 0:
             self.pick_new_mode()
+        self.mode_steps_remaining -= 1
 
         if boundary_gain > 0.05:
             heading_error = self.wrap_pi(center_heading - self.heading)
@@ -285,11 +357,11 @@ class DynamicTargetGenerator:
             heading_error = 0.0
 
         self.turn_rate += (-(self.turn_rate - desired_turn_rate) / max(self.turn_tau, 1e-3)) * dt
-        self.turn_rate += np.random.normal(0.0, self.turn_noise_std) * math.sqrt(dt)
+        self.turn_rate += self.rng_motion.normal(0.0, self.turn_noise_std) * math.sqrt(dt)
         self.turn_rate = np.clip(self.turn_rate, -self.max_turn_rate, self.max_turn_rate)
 
         self.speed += ((desired_speed - self.speed) / max(self.speed_tau, 1e-3)) * dt
-        self.speed += np.random.normal(0.0, self.speed_noise_std) * math.sqrt(dt)
+        self.speed += self.rng_motion.normal(0.0, self.speed_noise_std) * math.sqrt(dt)
         self.speed = np.clip(self.speed, self.speed_min, self.speed_max)
 
         self.heading = self.wrap_pi(self.heading + self.turn_rate * dt)
@@ -302,7 +374,7 @@ class DynamicTargetGenerator:
         # 边界检查与柔性回退
         if not self.is_inside(new_pos):
             # 撞边后直接朝场地中心重新定向，避免沿边界切向顺移。
-            self.heading = self.wrap_pi(center_heading + np.random.uniform(-0.12, 0.12))
+            self.heading = self.wrap_pi(center_heading + self.rng_motion.uniform(-0.12, 0.12))
             self.turn_rate = 0.0
             self.speed = max(self.speed_min, 0.75 * self.speed)
             self.velocity = np.array(
@@ -335,10 +407,10 @@ class DynamicTargetGenerator:
         speed_max = max(speed_min, self.obstacle_speed_max)
 
         for idx in range(max(0, self.obstacle_count)):
-            shape = str(np.random.choice(shapes))
+            shape = str(self.rng_init.choice(shapes))
             pos = self.sample_global_position()
-            heading = np.random.uniform(-math.pi, math.pi)
-            speed = np.random.uniform(speed_min, speed_max)
+            heading = self.rng_init.uniform(-math.pi, math.pi)
+            speed = self.rng_init.uniform(speed_min, speed_max)
             obstacle = {
                 'id': idx,
                 'shape': shape,
@@ -346,8 +418,8 @@ class DynamicTargetGenerator:
                 'heading': heading,
                 'speed': speed,
                 'scale': self.sample_obstacle_scale(shape, size_min, size_max),
-                'yaw': np.random.uniform(-math.pi, math.pi),
-                'yaw_rate': np.random.uniform(-0.08, 0.08),
+                'yaw': self.rng_init.uniform(-math.pi, math.pi),
+                'yaw_rate': self.rng_init.uniform(-0.08, 0.08),
                 'color': self.sample_obstacle_color(),
             }
             obstacles.append(obstacle)
@@ -361,26 +433,25 @@ class DynamicTargetGenerator:
         输出：返回与该功能对应的计算结果。
         """
         if shape == 'sphere':
-            size = np.random.uniform(size_min, size_max)
+            size = self.rng_init.uniform(size_min, size_max)
             return np.array([size, size, size], dtype=float)
         if shape == 'cylinder':
-            diameter = np.random.uniform(size_min, size_max)
-            height = np.random.uniform(size_min, size_max)
+            diameter = self.rng_init.uniform(size_min, size_max)
+            height = self.rng_init.uniform(size_min, size_max)
             return np.array([diameter, diameter, height], dtype=float)
         return np.array(
             [
-                np.random.uniform(size_min, size_max),
-                np.random.uniform(size_min, size_max),
-                np.random.uniform(size_min, size_max),
+                self.rng_init.uniform(size_min, size_max),
+                self.rng_init.uniform(size_min, size_max),
+                self.rng_init.uniform(size_min, size_max),
             ],
             dtype=float,
         )
 
-    @staticmethod
-    def sample_obstacle_color():
+    def sample_obstacle_color(self):
         """
         功能：生成障碍物可视化颜色。
-        输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
+        输入：无显式输入参数；使用初始化随机流 rng_init。
         输出：返回采样得到的颜色配置。
         """
         palette = [
@@ -389,7 +460,7 @@ class DynamicTargetGenerator:
             [0.55, 0.95, 0.35, 0.72],
             [0.95, 0.85, 0.25, 0.72],
         ]
-        return list(palette[np.random.randint(0, len(palette))])
+        return list(palette[self.rng_init.randint(0, len(palette))])
 
     def update_obstacles(self, dt):
         """
@@ -414,16 +485,16 @@ class DynamicTargetGenerator:
                 heading_error = self.wrap_pi(center_heading - obstacle['heading'])
                 obstacle['heading'] = self.wrap_pi(obstacle['heading'] + np.clip(heading_error, -0.5, 0.5) * boundary_gain)
             else:
-                obstacle['heading'] = self.wrap_pi(obstacle['heading'] + np.random.normal(0.0, 0.035) * math.sqrt(dt))
+                obstacle['heading'] = self.wrap_pi(obstacle['heading'] + self.rng_motion.normal(0.0, 0.035) * math.sqrt(dt))
 
             velocity = obstacle['speed'] * np.array([math.cos(obstacle['heading']), math.sin(obstacle['heading'])], dtype=float)
             new_pos = pos + velocity * dt
             if not self.is_inside(new_pos):
-                obstacle['heading'] = self.wrap_pi(center_heading + np.random.uniform(-0.18, 0.18))
+                obstacle['heading'] = self.wrap_pi(center_heading + self.rng_motion.uniform(-0.18, 0.18))
                 norm = max(np.linalg.norm(to_center), 1e-6)
                 new_pos = pos + min(0.4, obstacle['speed'] * dt + 0.05) * to_center / norm
                 if not self.is_inside(new_pos):
-                    new_pos = self.sample_global_position()
+                    new_pos = self.sample_global_position(self.rng_motion)
             obstacle['pos'] = new_pos
             obstacle['yaw'] = self.wrap_pi(obstacle['yaw'] + obstacle['yaw_rate'] * dt)
     
@@ -434,10 +505,14 @@ class DynamicTargetGenerator:
         输出：无显式返回；持续进入事件循环并保持节点运行。
         """
         dt = 1.0 / 10.0  # 对应10 Hz
+        self.arm_wait_start = rospy.Time.now()
         while not rospy.is_shutdown():
-            self.update_position(dt)
-            self.update_obstacles(dt)
-            
+            # 仅在运动已启动（ARM 或超时回退）时推进目标与障碍物
+            # 未启动时保持初始位姿不变，但仍发布位姿/标记（场景就绪信号）
+            if self.motion_enabled():
+                self.update_position(dt)
+                self.update_obstacles(dt)
+
             # 创建并发布PoseStamped消息
             msg = PoseStamped()
             msg.header.stamp = rospy.Time.now()
@@ -447,7 +522,7 @@ class DynamicTargetGenerator:
             msg.pose.position.z = self.target_mesh_z
             msg.pose.orientation.z = math.sin(0.5 * self.heading)
             msg.pose.orientation.w = math.cos(0.5 * self.heading)
-            
+
             self.pose_pub.publish(msg)
             self.publish_mesh_marker(msg)
             self.publish_obstacle_markers(msg.header.stamp)

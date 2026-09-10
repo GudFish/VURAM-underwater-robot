@@ -9,6 +9,7 @@
 import sys
 from pathlib import Path
 import math
+import time
 import casadi as ca
 import rospy
 from geometry_msgs.msg import Twist
@@ -20,6 +21,7 @@ if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
 from utils.boundary_constraints import load_boundary_halfspaces
+from utils.sonar_obstacle_avoidance import SonarObstacleAvoidance
 
 
 def wrap_pi(angle):
@@ -83,6 +85,7 @@ class BeliefAwareMPCTracker:
         self.w_du = float(rospy.get_param('~w_du', 0.6))
         self.w_dyaw = float(rospy.get_param('~w_dyaw', 0.4))
         self.w_cte = float(rospy.get_param('~w_cte', 2.5))
+        self.w_obstacle = float(rospy.get_param('~w_obstacle', 10.0))
         self.w_sigma = float(rospy.get_param('~w_sigma', 1.2))
         self.w_bearing_trace = float(rospy.get_param('~w_bearing_trace', self.w_sigma))
         self.w_bearing_logdet = float(rospy.get_param('~w_bearing_logdet', 0.0))
@@ -123,6 +126,10 @@ class BeliefAwareMPCTracker:
         self.active_scene_sep_sigma_deg = float(rospy.get_param('~active_scene_sep_sigma_deg', 6.0))
         self.w_active_scene_separation = float(rospy.get_param('~w_active_scene_separation', 2.0))
         self.active_scene_base_fraction = float(rospy.get_param('~active_scene_base_fraction', 0.25))
+        self.active_scene_bearing_focus_deg = float(rospy.get_param('~active_scene_bearing_focus_deg', 12.0))
+        self.active_scene_bearing_focus_gain = float(rospy.get_param('~active_scene_bearing_focus_gain', 3.0))
+        # 无 fresh 声学 bearing 时，用先验估计的目标方位作为方位基准（默认开启）
+        self.active_scene_prior_bearing_enable = bool(rospy.get_param('~active_scene_prior_bearing_enable', True))
 
         dyn = rospy.get_param('~dynamics', {})
         self.m11 = float(dyn.get('m11', 40.0))
@@ -175,6 +182,7 @@ class BeliefAwareMPCTracker:
         self.last_lam_g = None
         self.boundary_halfspaces = []
         self.boundary_ready = False
+        self.avoidance = SonarObstacleAvoidance()
         self.boundary_wait_start = rospy.Time.now()
         self.solver = None
         self.lbg = []
@@ -194,6 +202,8 @@ class BeliefAwareMPCTracker:
         )
         self.vel_pub = rospy.Publisher(self.vel_topic, Twist, queue_size=10)
         self.yaw_pub = rospy.Publisher(self.yaw_topic, Float32, queue_size=10)
+        self.solver_time_pub = rospy.Publisher('/planner/solver_time', Float32MultiArray, queue_size=10)
+        self.alpha_pub = rospy.Publisher('/planner/alpha', Float32, queue_size=10)
 
         rospy.loginfo('[BeliefAwareMPC] started. belief topic: %s', self.belief_topic)
 
@@ -277,7 +287,8 @@ class BeliefAwareMPCTracker:
         w = ca.vertcat(u_cmd, v_cmd, yaw_cmd)
 
         scene_slots = max(self.active_scene_max_points, 0)
-        p = ca.SX.sym('P', 20 + 3 * scene_slots)
+        obstacle_slots = max(self.avoidance.max_obstacles, 0)
+        p = ca.SX.sym('P', 20 + 3 * scene_slots + 4 * obstacle_slots)
         rx = p[0]
         ry = p[1]
         rpsi = p[2]
@@ -299,6 +310,7 @@ class BeliefAwareMPCTracker:
         pvyvy = p[18]
         pvxvy = p[19]
         scene_base = 20
+        obstacle_base = scene_base + 3 * scene_slots
 
         m = ca.DM([[self.m11, 0.0, 0.0], [0.0, self.m22, self.m23], [0.0, self.m23, self.m33]])
         m_inv = ca.inv(m)
@@ -467,6 +479,14 @@ class BeliefAwareMPCTracker:
                 g.append(nx * rx + ny * ry)
                 lbg.append(c_boundary)
                 ubg.append(ca.inf)
+            for idx in range(obstacle_slots):
+                base = obstacle_base + 4 * idx
+                ox, oy, safe_radius, active = p[base], p[base + 1], p[base + 2], p[base + 3]
+                # 软代价（非硬约束）：障碍密集时优化仍可行，允许权衡跟踪与安全距离
+                dist_obs = ca.sqrt((rx - ox) * (rx - ox) + (ry - oy) * (ry - oy) + 1e-9)
+                violation = softplus_hinge(safe_radius - dist_obs)
+                norm_radius = ca.fmax(safe_radius, 0.5)
+                j = j + active * self.w_obstacle * (violation / norm_radius) * (violation / norm_radius)
 
         term_dx = tx - rx
         term_dy = ty - ry
@@ -577,6 +597,21 @@ class BeliefAwareMPCTracker:
             return None
         return self.latest_bearing
 
+    def estimated_target_bearing(self):
+        """
+        功能：根据 belief 先验估计的目标位置计算机器人坐标系下的目标方位角。
+              用于在声学 bearing 丢失（低频/丢包）时作为场景消歧的方位基准。
+        输入：无显式输入参数；依赖当前缓存的目标估计与机器人状态。
+        输出：返回机器人系方位角（rad）或 None（无有效估计）。
+        """
+        if not self.have_belief:
+            return None
+        dx = self.target_x - self.x
+        dy = self.target_y - self.y
+        if math.hypot(dx, dy) < 0.1:
+            return None
+        return wrap_pi(math.atan2(dy, dx) - self.psi)
+
     def scene_candidates_cb(self, msg):
         """
         功能：处理场景候选量测消息并更新候选缓存。
@@ -639,17 +674,43 @@ class BeliefAwareMPCTracker:
         """
         params = []
         if self.active_scene_is_fresh():
-            total_weight = sum(item['weight'] for item in self.scene_candidates_world)
-            norm = max(total_weight, 1.0e-6)
             selected = self.scene_candidates_world[:max(self.active_scene_max_points, 0)]
+            # 方位基准优先级：新鲜声学 bearing > 先验估计的目标方位
+            guidance_bearing = self.fresh_bearing()
+            using_prior = False
+            if guidance_bearing is None and self.active_scene_prior_bearing_enable:
+                guidance_bearing = self.estimated_target_bearing()
+                using_prior = guidance_bearing is not None
+            focus_sigma = max(math.radians(self.active_scene_bearing_focus_deg), 1.0e-3)
+            # 使用先验估计时，按估计置信度缩放增益：不确定性越高，先验方位基准的
+            # 引导作用越弱，避免估计偏差将场景消歧权重推向错误方向
+            if using_prior:
+                sigma = max(self.sigma_min, self.belief_scalar_uncertainty())
+                span = max(self.unc_high - self.unc_low, 1e-6)
+                confidence = max(0.0, min(1.0, (self.unc_high - sigma) / span))
+                focus_gain = self.active_scene_bearing_focus_gain * confidence
+            else:
+                focus_gain = self.active_scene_bearing_focus_gain
+            base_norm = max(sum(item['weight'] for item in selected), 1.0e-6)
+            focused_weights = []
+            for item in selected:
+                weight = item['weight'] / base_norm
+                if guidance_bearing is not None and focus_gain > 0.0:
+                    candidate_bearing = wrap_pi(math.atan2(item['y'] - self.y, item['x'] - self.x) - self.psi)
+                    bearing_error = wrap_pi(candidate_bearing - guidance_bearing)
+                    focus = math.exp(-0.5 * (bearing_error / focus_sigma) ** 2)
+                    weight *= 1.0 + focus_gain * focus
+                focused_weights.append(weight)
+            norm = 1.0
         else:
             norm = 1.0
             selected = []
+            focused_weights = []
 
         for idx in range(max(self.active_scene_max_points, 0)):
             if idx < len(selected):
                 item = selected[idx]
-                params.extend([item['x'], item['y'], self._clip(item['weight'] / norm, 0.0, 1.0)])
+                params.extend([item['x'], item['y'], self._clip(focused_weights[idx] / norm, 0.0, 1.0)])
             else:
                 params.extend([0.0, 0.0, 0.0])
         return params
@@ -718,17 +779,33 @@ class BeliefAwareMPCTracker:
             max(self.cov_floor, self.target_cov_vxvx),
             max(self.cov_floor, self.target_cov_vyvy),
             self.target_cov_vxvy,
-        ] + self.active_scene_parameters()
+        ] + self.active_scene_parameters() + [
+            value for item in self.avoidance.obstacles_world(self.x, self.y, self.psi) for value in item
+        ]
 
         args = {'x0': x0, 'lbx': self.lbx, 'ubx': self.ubx, 'lbg': self.lbg, 'ubg': self.ubg, 'p': p}
         if self.last_lam_x is not None and self.last_lam_g is not None:
             args['lam_x0'] = self.last_lam_x
             args['lam_g0'] = self.last_lam_g
 
+        t_start = time.time()
         sol = self.solver(**args)
+        solver_ms = 1000.0 * (time.time() - t_start)
         w_opt = sol['x'].full().flatten().tolist()
         self.last_lam_x = sol['lam_x']
         self.last_lam_g = sol['lam_g']
+
+        # 发布求解耗时
+        try:
+            stats = self.solver.stats()
+            iters = stats.get('iter_count', 0)
+            feasible = 1.0 if stats.get('return_status', '') == 'Solve_Succeeded' else 0.0
+        except Exception:
+            iters = 0
+            feasible = 1.0
+        tm_msg = Float32MultiArray()
+        tm_msg.data = [float(solver_ms), float(iters), feasible]
+        self.solver_time_pub.publish(tm_msg)
 
         self.U_init = w_opt[0:self.N]
         self.V_init = w_opt[self.N:2 * self.N]
@@ -741,6 +818,7 @@ class BeliefAwareMPCTracker:
         输入：`vx_body`、`vy_body`、`yaw` 为该函数执行所需的输入参数。
         输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
         """
+        vx_body, vy_body, yaw, _ = self.avoidance.filter_command(vx_body, vy_body, yaw, self.u_max, self.v_max)
         vel_msg = Twist()
         vel_msg.linear.x = vx_body
         vel_msg.linear.y = vy_body
@@ -800,6 +878,7 @@ class BeliefAwareMPCTracker:
                 continue
             if not self.have_belief:
                 rospy.logwarn_throttle(2.0, '[BeliefAwareMPC] waiting for target belief; running search behavior...')
+                self.alpha_pub.publish(Float32(data=float('nan')))  # 无 belief 时 α 无意义
                 if self.search_enable:
                     bearing = self.fresh_bearing() if self.bearing_search_enable else None
                     if bearing is None:
@@ -823,11 +902,16 @@ class BeliefAwareMPCTracker:
             except Exception as exc:
                 rospy.logwarn_throttle(1.0, '[BeliefAwareMPC] solver failed: %s' % str(exc))
                 vx_cmd, vy_cmd, yaw_cmd, reached, sigma0 = 0.0, 0.0, self.last_cmd_yaw, False, self.belief_scalar_uncertainty()
+                self.alpha_pub.publish(Float32(data=float('nan')))
 
             self.last_cmd_u = vx_cmd
             self.last_cmd_v = vy_cmd
             self.last_cmd_yaw = yaw_cmd
             self.publish_cmd(vx_cmd, vy_cmd, yaw_cmd)
+
+            # 发布不确定性混合系数 α
+            alpha = max(0.0, min(1.0, (sigma0 - self.unc_low) / max(self.unc_high - self.unc_low, 1e-6)))
+            self.alpha_pub.publish(Float32(data=alpha))
 
             dist = math.hypot(self.target_x - self.x, self.target_y - self.y)
             rospy.loginfo_throttle(

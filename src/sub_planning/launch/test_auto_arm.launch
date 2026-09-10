@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ====================================================================
+   test_auto_arm.launch
+   独立测试 auto_arm_guided.py 节点：启动 MAVROS + 自动 GUIDED + ARM。
+
+   用法：
+     roslaunch sub_planning test_auto_arm.launch
+     roslaunch sub_planning test_auto_arm.launch arm_delay:=5.0
+  ==================================================================== -->
+
+  <arg name="arm_delay" default="5.0" />
+  <arg name="retry_timeout" default="30.0" />
+
+  <!-- MAVROS 桥接（需要 SITL 已运行） -->
+  <include file="$(find sub_planning)/launch/apm.launch" />
+
+  <!-- 自动 ARM 节点：等待场景就绪 + arm_delay 后再 GUIDED + ARM -->
+  <node name="auto_arm_guided" pkg="sub_planning" type="auto_arm_guided.py" output="screen">
+    <param name="arm_delay" value="$(arg arm_delay)"/>
+    <param name="retry_timeout" value="$(arg retry_timeout)"/>
+    <param name="scene_timeout" value="60.0"/>
+    <param name="scene_ready_topic" value="/dynamic_target/pose"/>
+  </node>
+</launch>

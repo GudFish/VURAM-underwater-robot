@@ -36,12 +36,15 @@ class TFBroadcasterNode:
         # 修正4：无修正（保持原始朝向）
         # self.correction_quat = [0.0, 0.0, 0.0, 1.0]
         
-        # 订阅 MAVROS 位姿话题
-        self.pose_sub = rospy.Subscriber('/mavros/local_position/pose', 
-                                         PoseStamped, 
+        # 订阅 MAVROS 位姿话题（在线运行时可用）
+        self.pose_sub = rospy.Subscriber('/mavros/local_position/pose',
+                                         PoseStamped,
                                          self.pose_callback)
-        # 可选：如果你使用的是 Odometry 话题，可以同时订阅它（例如 /mavros/local_position/odom）
-        # self.odom_sub = rospy.Subscriber('/mavros/local_position/odom', Odometry, self.odom_callback)
+        # 同时订阅 Odometry 话题（bag 回放时 /mavros/local_position/pose
+        # 可能未被记录，而 odom 包含相同的位姿信息）
+        self.odom_sub = rospy.Subscriber('/mavros/local_position/odom',
+                                         Odometry,
+                                         self.odom_callback)
 
     def quat_multiply(self, q1, q2):
         """
@@ -51,48 +54,53 @@ class TFBroadcasterNode:
         """
         return tf_trans.quaternion_multiply(q1, q2)
 
-    def pose_callback(self, msg):
-        # 接收到的原始四元数 (x, y, z, w)
+    def broadcast_pose(self, pose):
         """
-        功能：处理位姿消息并广播对应 TF。
-        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
-        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        功能：将位姿（Pose 类型）广播为 map -> base_link 的 TF 变换。
+        输入：`pose` 为 geometry_msgs/Pose 类型的位姿。
+        输出：无显式返回；发送 TF 变换。
         """
-        orig_quat = [msg.pose.orientation.x,
-                     msg.pose.orientation.y,
-                     msg.pose.orientation.z,
-                     msg.pose.orientation.w]
-        
+        orig_quat = [pose.orientation.x,
+                     pose.orientation.y,
+                     pose.orientation.z,
+                     pose.orientation.w]
+
         # 应用修正：最终四元数 = 修正四元数 * 原始四元数
         # 注意顺序：先修正，再应用原始旋转（通常修正代表坐标系的固定差异）
         corrected_quat = self.quat_multiply(orig_quat, self.correction_quat)
-        
+
         # 构建 TransformStamped 消息
         t = TransformStamped()
         t.header.stamp = rospy.Time.now()
         t.header.frame_id = "map"          # 父坐标系（世界系）
         t.child_frame_id = "base_link"     # 必须与 URDF 中的根 link 名称完全一致
-        
-        t.transform.translation.x = msg.pose.position.x
-        t.transform.translation.y = msg.pose.position.y
-        t.transform.translation.z = msg.pose.position.z
-        
+
+        t.transform.translation.x = pose.position.x
+        t.transform.translation.y = pose.position.y
+        t.transform.translation.z = pose.position.z
+
         t.transform.rotation.x = corrected_quat[0]
         t.transform.rotation.y = corrected_quat[1]
         t.transform.rotation.z = corrected_quat[2]
         t.transform.rotation.w = corrected_quat[3]
-        
+
         self.br.sendTransform(t)
 
-    # 可选：如果使用 Odometry 话题
+    def pose_callback(self, msg):
+        """
+        功能：处理位姿消息并广播对应 TF。
+        输入：`msg` 为 PoseStamped 类型的 ROS 消息。
+        输出：无显式返回；发送 TF 变换。
+        """
+        self.broadcast_pose(msg.pose)
+
     def odom_callback(self, msg):
-        # 类似 pose_callback，从 msg.pose.pose 中提取位姿
         """
-        功能：处理里程计消息并广播对应 TF。
-        输入：`msg` 为对应订阅话题的 ROS 消息；其余输入依赖当前对象缓存状态。
-        输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
+        功能：处理里程计消息并广播对应 TF（bag 回放时同样生效）。
+        输入：`msg` 为 Odometry 类型的 ROS 消息。
+        输出：无显式返回；发送 TF 变换。
         """
-        pass
+        self.broadcast_pose(msg.pose.pose)
 
 if __name__ == '__main__':
     try:

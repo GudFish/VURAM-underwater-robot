@@ -13,6 +13,17 @@
   <arg name="init_sample_attempts" default="80"/>
   <arg name="wait_robot_odom_timeout" default="10.0"/>
 
+  <!-- ==================== 运动启动控制参数 ==================== -->
+  <!-- 目标与障碍物在飞控解锁（ARM）后才开始运动，使运动时钟与记录时钟对齐。 -->
+  <arg name="mavros_state_topic" default="/mavros/state"/>
+  <arg name="motion_start_on_arm" default="true"/>
+  <arg name="arm_wait_timeout" default="120.0"/>
+
+  <!-- ==================== 目标运动速度范围参数 ==================== -->
+  <!-- 目标巡航速度范围（m/s），各机动模式的目标速度在此范围内采样。 -->
+  <arg name="target_speed_min" default="0.25"/>
+  <arg name="target_speed_max" default="0.75"/>
+
   <!-- ==================== 目标发布与显示参数 ==================== -->
   <!-- 这一组参数定义动态目标位姿与目标网格可视化的输出接口。 -->
   <arg name="target_pose_topic" default="/dynamic_target/pose"/>
@@ -24,9 +35,9 @@
   <!-- ==================== 障碍物场景参数 ==================== -->
   <!-- 这一组参数控制动态障碍物的数量、尺寸和运动范围。 -->
   <arg name="obstacle_marker_topic" default="/dynamic_obstacles/markers"/>
-  <arg name="obstacle_count" default="18"/>
-  <arg name="obstacle_size_min" default="0.6"/>
-  <arg name="obstacle_size_max" default="1.0"/>
+  <arg name="obstacle_count" default="16"/>
+  <arg name="obstacle_size_min" default="0.5"/>
+  <arg name="obstacle_size_max" default="0.8"/>
   <arg name="obstacle_speed_min" default="0.1"/>
   <arg name="obstacle_speed_max" default="0.2"/>
 
@@ -60,5 +71,14 @@
     <param name="init_max_radius" value="$(arg init_max_radius)"/>
     <param name="init_sample_attempts" value="$(arg init_sample_attempts)"/>
     <param name="wait_robot_odom_timeout" value="$(arg wait_robot_odom_timeout)"/>
+
+    <!-- 运动启动控制：等待 ARM 后才开始目标/障碍物运动。 -->
+    <param name="mavros_state_topic" value="$(arg mavros_state_topic)"/>
+    <param name="motion_start_on_arm" value="$(arg motion_start_on_arm)"/>
+    <param name="arm_wait_timeout" value="$(arg arm_wait_timeout)"/>
+
+    <!-- 目标运动速度范围（m/s）。 -->
+    <param name="target_speed_min" value="$(arg target_speed_min)"/>
+    <param name="target_speed_max" value="$(arg target_speed_max)"/>
   </node>
 </launch>

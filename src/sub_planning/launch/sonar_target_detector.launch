@@ -22,6 +22,7 @@
     <param name="measurement_topic" value="/forward_sonar/measurement"/>
     <param name="candidate_topic" value="/forward_sonar/candidates"/>
     <param name="scene_candidate_topic" value="/forward_sonar/scene_candidates"/>
+    <param name="obstacle_topic" value="/forward_sonar/obstacles"/>
     <param name="debug_topic" value="/forward_sonar/detection_debug"/>
     <param name="debug_image_topic" value="/forward_sonar/debug_image"/>
 
@@ -39,6 +40,10 @@
     <param name="max_candidates" value="20"/>
     <param name="publish_scene_candidates" value="true"/>
     <param name="max_scene_candidates" value="16"/>
+    <param name="max_obstacles" value="8"/>
+    <param name="obstacle_min_score" value="0.04"/>
+    <param name="obstacle_min_radius" value="0.20"/>
+    <param name="obstacle_max_range" value="12.0"/>
     <param name="bearing_candidate_gate_deg" value="12.0"/>
     <param name="publish_candidates_without_bearing" value="true"/>
     <param name="publish_legacy_measurement" value="false"/>
@@ -66,6 +71,21 @@
     <param name="near_noise_range_m" value="2.5"/>
     <param name="near_noise_min_area" value="32"/>
     <param name="near_noise_min_physical_length_m" value="0.45"/>
+
+    <!-- 可选预处理与区域级检测参数（离线批量标注工具同款，默认关闭保持原行为） -->
+    <param name="denoise_method" value="median"/>
+    <param name="range_norm_enabled" value="true"/>
+    <param name="use_region_detection" value="true"/>
+    <!-- <param name="denoise_method" value="none"/>
+    <param name="range_norm_enabled" value="false"/>
+    <param name="use_region_detection" value="false"/> -->
+    <param name="range_norm_smooth" value="15"/>
+    <param name="region_threshold_percentile" value="93.0"/>
+    <param name="region_min_threshold" value="40.0"/>
+    <param name="region_min_blob_area" value="40"/>
+    <param name="region_max_blob_area" value="600"/>
+    <param name="region_max_range" value="25.0"/>
+    <param name="region_near_gain" value="1.0"/>
   </node>
 
   <!-- ==================== 检测调试图像窗口 ==================== -->

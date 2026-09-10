@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ====================================================================
+   metrics_logger.launch
+   可复用的评估指标记录器。订阅仿真中的关键话题，按固定频率写入 CSV。
+
+   参数：
+     method      – 方法名称，用于 CSV 文件名标识（默认 unknown）
+     output_dir  – CSV 输出目录（默认 $(env HOME)/sub_planning_metrics）
+     record_rate – 记录频率 Hz（默认 10.0）
+  ==================================================================== -->
+
+  <arg name="method" default="unknown"/>
+  <arg name="random_seed" default="-1"/>
+  <arg name="output_dir" default="$(env HOME)/sub_planning_metrics"/>
+  <arg name="record_rate" default="10.0"/>
+
+  <node name="metrics_logger" pkg="sub_planning" type="metrics_logger.py" output="screen">
+    <param name="method" value="$(arg method)"/>
+    <param name="random_seed" value="$(arg random_seed)"/>
+    <param name="output_dir" value="$(arg output_dir)"/>
+    <param name="record_rate" value="$(arg record_rate)"/>
+
+    <!-- 话题配置（使用默认值，与共享管道一致） -->
+    <param name="target_gt_topic" value="/dynamic_target/pose"/>
+    <param name="target_est_pose_topic" value="/target_estimate/pose"/>
+    <param name="belief_topic" value="/target_estimate/belief"/>
+    <param name="odom_topic" value="/mavros/local_position/odom"/>
+    <param name="vel_cmd_topic" value="/target_velocity_xy"/>
+    <param name="solver_time_topic" value="/planner/solver_time"/>
+    <param name="recovery_status_topic" value="/planner/recovery_status"/>
+    <param name="obstacle_gt_topic" value="/dynamic_obstacles/markers"/>
+    <param name="desired_standoff" value="3.0"/>
+    <param name="standoff_tolerance" value="0.8"/>
+    <param name="sonar_fov_deg" value="130.0"/>
+    <param name="sonar_min_range" value="0.2"/>
+    <param name="sonar_max_range" value="30.0"/>
+  </node>
+</launch>

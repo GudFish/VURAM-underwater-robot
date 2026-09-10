@@ -20,7 +20,7 @@
   <arg name="tdoa_noise_std" default="2.0e-5"/>
   <arg name="beacon_ref" default="0"/>
   <arg name="max_range" default="80.0"/>
-  <arg name="drop_prob" default="0.15"/>
+  <arg name="drop_prob" default="0.25"/>
   <arg name="reset_on_disarm" default="True"/>
 
   <!-- ==================== TDOA 传感器仿真节点 ==================== -->

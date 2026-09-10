@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ====================================================================
+   bag_record.launch
+   可复用的 rosbag 记录器：随仿真同时记录关键话题，便于离线复现与分析。
+
+   命名格式: {bag_dir}/{method}_seed{random_seed}_{anon}.bag
+   例如:      ~/ardupilot_ws/bagfiles/proposed_seed42_ts_roslaunch_1756..._0.bag
+   （anon 后缀由 roslaunch 自动生成，含时间戳与 PID，保证唯一性）
+
+   参数：
+     method         – 方法名（命名区分用）
+     random_seed    – 随机种子（命名区分用）
+     bag_dir        – 输出目录（默认 ~/ardupilot_ws/bagfiles，目录需预先存在，
+                      批量实验由 run_experiments.sh 自动创建）
+     record_images  – 是否记录声呐图像话题（体积大，默认 true）
+  ==================================================================== -->
+
+  <arg name="method" default="unknown"/>
+  <arg name="random_seed" default="-1"/>
+  <arg name="bag_dir" default="$(env HOME)/ardupilot_ws/bagfiles"/>
+  <arg name="record_images" default="true"/>
+
+  <!-- 图像话题（大体积，可选关闭） -->
+  <arg name="image_topics" value="$(eval '/forward_sonar/image /forward_sonar/debug_image' if arg('record_images') else '')"/>
+
+  <node name="rosbag_record" pkg="rosbag" type="record" output="screen"
+        args="--lz4 -O $(arg bag_dir)/$(arg method)_seed$(arg random_seed)_$(anon ts).bag
+              /dynamic_target/pose /dynamic_obstacles/markers
+              /mavros/state /mavros/local_position/odom /mavros/local_position/pose
+              /target_acoustic_tdoa /target_acoustic_bearing
+              /forward_sonar/measurement /forward_sonar/candidates
+              /forward_sonar/scene_candidates /forward_sonar/obstacles
+              /forward_sonar/detection_debug
+              /target_estimate/pose /target_estimate/twist
+              /target_estimate/belief /target_estimate/pdaf_debug
+              /target_velocity_xy /target_yaw
+              /planner/solver_time /planner/alpha
+              /planner/recovery_status
+              $(arg image_topics)"/>
+</launch>

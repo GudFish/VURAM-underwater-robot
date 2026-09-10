@@ -9,17 +9,19 @@
 import sys
 from pathlib import Path
 import math
+import time
 import casadi as ca
 import rospy
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Float32MultiArray
 
 SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
 from utils.boundary_constraints import load_boundary_halfspaces
+from utils.sonar_obstacle_avoidance import SonarObstacleAvoidance
 
 
 def wrap_pi(angle):
@@ -92,6 +94,7 @@ class DynamicTargetMPCTracker:
         self.w_du = rospy.get_param('~w_du', 0.6)
         self.w_dyaw = rospy.get_param('~w_dyaw', 0.4)
         self.w_cte = rospy.get_param('~w_cte', 2.5)
+        self.w_obstacle = float(rospy.get_param('~w_obstacle', 10.0))
         self.sonar_fov_deg = float(rospy.get_param('~sonar_fov_deg', 90.0))
         self.sonar_min_range = float(rospy.get_param('~sonar_min_range', 0.8))
         self.sonar_max_range = float(rospy.get_param('~sonar_max_range', 35.0))
@@ -145,6 +148,7 @@ class DynamicTargetMPCTracker:
         self.last_lam_g = None
         self.boundary_halfspaces = []
         self.boundary_ready = False
+        self.avoidance = SonarObstacleAvoidance()
         self.boundary_wait_start = rospy.Time.now()
         self.solver = None
         self.lbg = []
@@ -158,6 +162,7 @@ class DynamicTargetMPCTracker:
         self.bearing_sub = rospy.Subscriber(self.bearing_topic, Float32, self.bearing_cb, queue_size=10)
         self.vel_pub = rospy.Publisher(self.vel_topic, Twist, queue_size=10)
         self.yaw_pub = rospy.Publisher(self.yaw_topic, Float32, queue_size=10)
+        self.solver_time_pub = rospy.Publisher('/planner/solver_time', Float32MultiArray, queue_size=10)
 
         rospy.loginfo('[DynamicTargetMPC] started. target topic: %s' % self.target_topic)
 
@@ -230,7 +235,8 @@ class DynamicTargetMPCTracker:
         yaw_cmd = ca.SX.sym('Y', self.N)
         w = ca.vertcat(u_cmd, v_cmd, yaw_cmd)
 
-        p = ca.SX.sym('P', 13)
+        obstacle_slots = max(self.avoidance.max_obstacles, 0)
+        p = ca.SX.sym('P', 13 + 4 * obstacle_slots)
         rx = p[0]
         ry = p[1]
         rpsi = p[2]
@@ -244,6 +250,7 @@ class DynamicTargetMPCTracker:
         prev_v = p[10]
         prev_yaw = p[11]
         use_gyaw = p[12]
+        obstacle_base = 13
 
         m = ca.DM([[self.m11, 0.0, 0.0], [0.0, self.m22, self.m23], [0.0, self.m23, self.m33]])
         m_inv = ca.inv(m)
@@ -356,6 +363,14 @@ class DynamicTargetMPCTracker:
                 g.append(nx * rx + ny * ry)
                 lbg.append(c_boundary)
                 ubg.append(ca.inf)
+            for idx in range(obstacle_slots):
+                base = obstacle_base + 4 * idx
+                ox, oy, safe_radius, active = p[base], p[base + 1], p[base + 2], p[base + 3]
+                # 软代价（非硬约束）：障碍密集时优化仍可行，允许权衡跟踪与安全距离
+                dist_obs = ca.sqrt((rx - ox) * (rx - ox) + (ry - oy) * (ry - oy) + 1e-9)
+                violation = softplus_hinge(safe_radius - dist_obs)
+                norm_radius = ca.fmax(safe_radius, 0.5)
+                j = j + active * self.w_obstacle * (violation / norm_radius) * (violation / norm_radius)
 
         term_dx = tx - rx
         term_dy = ty - ry
@@ -496,17 +511,31 @@ class DynamicTargetMPCTracker:
             self.last_cmd_v,
             self.last_cmd_yaw,
             1.0 if self.use_goal_yaw else 0.0,
-        ]
+        ] + [value for item in self.avoidance.obstacles_world(self.x, self.y, self.psi) for value in item]
 
         args = {'x0': x0, 'lbx': self.lbx, 'ubx': self.ubx, 'lbg': self.lbg, 'ubg': self.ubg, 'p': p}
         if self.last_lam_x is not None and self.last_lam_g is not None:
             args['lam_x0'] = self.last_lam_x
             args['lam_g0'] = self.last_lam_g
 
+        t_start = time.time()
         sol = self.solver(**args)
+        solver_ms = 1000.0 * (time.time() - t_start)
         w_opt = sol['x'].full().flatten().tolist()
         self.last_lam_x = sol['lam_x']
         self.last_lam_g = sol['lam_g']
+
+        # 发布求解耗时与统计信息
+        try:
+            stats = self.solver.stats()
+            iters = stats.get('iter_count', 0)
+            feasible = 1.0 if stats.get('return_status', '') == 'Solve_Succeeded' else 0.0
+        except Exception:
+            iters = 0
+            feasible = 1.0
+        tm_msg = Float32MultiArray()
+        tm_msg.data = [float(solver_ms), float(iters), feasible]
+        self.solver_time_pub.publish(tm_msg)
 
         self.U_init = w_opt[0:self.N]
         self.V_init = w_opt[self.N:2 * self.N]
@@ -519,6 +548,7 @@ class DynamicTargetMPCTracker:
         输入：`vx_body`、`vy_body`、`yaw` 为该函数执行所需的输入参数。
         输出：无显式返回；通过更新内部状态、发布消息或执行副作用完成功能。
         """
+        vx_body, vy_body, yaw, _ = self.avoidance.filter_command(vx_body, vy_body, yaw, self.u_max, self.v_max)
         vel_msg = Twist()
         vel_msg.linear.x = vx_body
         vel_msg.linear.y = vy_body

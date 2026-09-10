@@ -9,11 +9,18 @@
 输出：发布目标速度（/target_velocity_xy）与偏航角（/target_yaw）。
 """
 import math
+import sys
+from pathlib import Path
 
 import rospy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Float32
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+from utils.sonar_obstacle_avoidance import SonarObstacleAvoidance
 
 
 def wrap_pi(angle):
@@ -114,6 +121,7 @@ class LOSTargetTracker:
 
         # 搜索状态机
         self.search_yaw_accumulator = 0.0
+        self.avoidance = SonarObstacleAvoidance()
 
         # --- 订阅者 ---
         self.odom_sub = rospy.Subscriber(self.odom_topic, Odometry, self.odom_cb, queue_size=1)
@@ -304,6 +312,7 @@ class LOSTargetTracker:
         输入：`vx_body` 前向速度、`vy_body` 侧向速度、`yaw` 偏航角。
         输出：无显式返回；通过发布者输出控制指令。
         """
+        vx_body, vy_body, yaw, _ = self.avoidance.filter_command(vx_body, vy_body, yaw, self.u_max, self.v_max)
         vel_msg = Twist()
         vel_msg.linear.x = vx_body
         vel_msg.linear.y = vy_body

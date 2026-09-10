@@ -175,6 +175,8 @@ catkin_install_python(PROGRAMS
   scripts/sensors/tdoa_bearing_estimator.py
   scripts/sensors/forward_sonar_sim.py
   scripts/sensors/forward_sonar_target_detector.py
+  scripts/sensors/batch_sonar_image_detector.py
+  scripts/sensors/sonar_separation_heatmap.py
   scripts/visualization/target_belief_viz.py
   scripts/estimators/target_pdaf_ekf.py
   scripts/estimators/target_bearing_window_ls.py
@@ -185,6 +187,8 @@ catkin_install_python(PROGRAMS
   scripts/visualization/forward_sonar_range_viz.py
   scripts/visualization/forward_sonar_image_viewer.py
   scripts/planners/dynamic_target_generator.py
+  scripts/utils/metrics_logger.py
+  scripts/utils/auto_arm_guided.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
