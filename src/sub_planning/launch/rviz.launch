@@ -1,5 +1,9 @@
 <?xml version="1.0"?>
 <launch>
+  <!-- display_config: RViz 显示配置文件路径（可被上层 launch 覆盖，
+       例如 rosbag 回放时使用俯视视角的 ardusub_display_topdown.rviz） -->
+  <arg name="display_config" default="$(find sub_planning)/config/ardusub_display.rviz"/>
+
   <!-- ==================== 机器人模型参数 ==================== -->
   <!-- 这一组参数用于将 AUV 的 URDF 模型加载到 ROS 参数服务器。 -->
   <!-- <param name="robot_description" textfile="$(find sub_planning)/urdf/AUV.urdf" /> -->
@@ -11,6 +15,7 @@
   <node name="tf_baselink_map_node" pkg="sub_planning" type="tf_baselink_map_node.py" />
 
   <!-- ==================== RViz 界面节点 ==================== -->
-  <!-- 使用预定义显示配置启动 RViz。 -->
-  <node name="rviz" pkg="rviz" type="rviz" args="-d $(find sub_planning)/config/ardusub_display.rviz" output="screen" />
+  <!-- 使用预定义显示配置启动 RViz（视角、窗口大小/位置由配置文件的
+       Views 与 Window Geometry 段决定）。 -->
+  <node name="rviz" pkg="rviz" type="rviz" args="-d $(arg display_config)" output="screen" />
 </launch>

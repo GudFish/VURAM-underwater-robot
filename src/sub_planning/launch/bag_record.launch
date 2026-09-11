@@ -26,7 +26,7 @@
 
   <node name="rosbag_record" pkg="rosbag" type="record" output="screen"
         args="--lz4 -O $(arg bag_dir)/$(arg method)_seed$(arg random_seed)_$(anon ts).bag
-              /dynamic_target/pose /dynamic_obstacles/markers
+              /dynamic_target/pose /dynamic_target/marker /dynamic_obstacles/markers
               /mavros/state /mavros/local_position/odom /mavros/local_position/pose
               /target_acoustic_tdoa /target_acoustic_bearing
               /forward_sonar/measurement /forward_sonar/candidates

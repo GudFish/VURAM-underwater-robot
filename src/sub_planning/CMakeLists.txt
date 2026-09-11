@@ -186,6 +186,7 @@ catkin_install_python(PROGRAMS
   scripts/visualization/boundary_loader.py
   scripts/visualization/forward_sonar_range_viz.py
   scripts/visualization/forward_sonar_image_viewer.py
+  scripts/visualization/target_marker_republisher.py
   scripts/planners/dynamic_target_generator.py
   scripts/utils/metrics_logger.py
   scripts/utils/auto_arm_guided.py
