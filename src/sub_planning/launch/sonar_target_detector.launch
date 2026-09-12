@@ -14,6 +14,11 @@
   <arg name="enabled" default="true"/>
   <arg name="debug_window" default="false"/>
 
+  <!-- 声呐几何参数（实物实验传真实声呐参数，仿真保持默认） -->
+  <arg name="fov_deg" default="130.0"/>
+  <arg name="max_range" default="30.0"/>
+  <arg name="min_range" default="0.2"/>
+
   <!-- ==================== 声呐目标检测节点 ==================== -->
   <node if="$(arg enabled)" name="forward_sonar_target_detector" pkg="sub_planning" type="forward_sonar_target_detector.py" output="screen">
     <!-- 话题接口参数：连接图像输入、方位引导和检测输出接口 -->
@@ -27,9 +32,9 @@
     <param name="debug_image_topic" value="/forward_sonar/debug_image"/>
 
     <!-- 声呐几何参数：定义检测使用的视场角和量程范围 -->
-    <param name="fov_deg" value="130.0"/>
-    <param name="max_range" value="30.0"/>
-    <param name="min_range" value="0.2"/>
+    <param name="fov_deg" value="$(arg fov_deg)"/>
+    <param name="max_range" value="$(arg max_range)"/>
+    <param name="min_range" value="$(arg min_range)"/>
 
     <!-- 候选筛选参数：控制阈值、最小连通域和候选发布门槛 -->
     <param name="threshold_percentile" value="98.5"/>

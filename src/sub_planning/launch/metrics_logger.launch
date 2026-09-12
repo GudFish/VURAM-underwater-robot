@@ -15,6 +15,11 @@
   <arg name="output_dir" default="$(env HOME)/sub_planning_metrics"/>
   <arg name="record_rate" default="10.0"/>
 
+  <!-- 声呐几何参数：用于"目标在声呐视场内"指标（实物实验传真实声呐参数） -->
+  <arg name="sonar_fov_deg" default="130.0"/>
+  <arg name="sonar_max_range" default="30.0"/>
+  <arg name="sonar_min_range" default="0.2"/>
+
   <node name="metrics_logger" pkg="sub_planning" type="metrics_logger.py" output="screen">
     <param name="method" value="$(arg method)"/>
     <param name="random_seed" value="$(arg random_seed)"/>
@@ -32,8 +37,8 @@
     <param name="obstacle_gt_topic" value="/dynamic_obstacles/markers"/>
     <param name="desired_standoff" value="3.0"/>
     <param name="standoff_tolerance" value="0.8"/>
-    <param name="sonar_fov_deg" value="130.0"/>
-    <param name="sonar_min_range" value="0.2"/>
-    <param name="sonar_max_range" value="30.0"/>
+    <param name="sonar_fov_deg" value="$(arg sonar_fov_deg)"/>
+    <param name="sonar_min_range" value="$(arg sonar_min_range)"/>
+    <param name="sonar_max_range" value="$(arg sonar_max_range)"/>
   </node>
 </launch>

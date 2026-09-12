@@ -177,10 +177,13 @@ catkin_install_python(PROGRAMS
   scripts/sensors/forward_sonar_target_detector.py
   scripts/sensors/batch_sonar_image_detector.py
   scripts/sensors/sonar_separation_heatmap.py
+  scripts/sensors/target_gps_receiver.py
+  scripts/sensors/target_gps_sender.py
   scripts/visualization/target_belief_viz.py
   scripts/estimators/target_pdaf_ekf.py
   scripts/estimators/target_bearing_window_ls.py
   scripts/demos/fossen_model_demo.py
+  scripts/demos/target_gps_announcer.py
   scripts/control/set_local_position.py
   scripts/visualization/tf_baselink_map_node.py
   scripts/visualization/boundary_loader.py

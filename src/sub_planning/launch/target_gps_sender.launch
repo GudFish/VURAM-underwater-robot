@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ====================================================================
+   target_gps_sender.launch
+   目标端 GPS 转发启动文件：在目标机器人的机载电脑上运行，把目标自身 GPS
+   通过局域网 UDP 转发给跟踪机器人（默认 192.168.0.101:4002）。
+
+   用法示例（目标机）：
+     roslaunch sub_planning target_gps_sender.launch
+     roslaunch sub_planning target_gps_sender.launch udp_ip:=192.168.0.101
+  ==================================================================== -->
+
+  <!-- ==================== 网络与话题参数 ==================== -->
+  <!-- udp_ip: 跟踪机器人 IP（本机为目标机 192.168.0.102，目标为 192.168.0.101） -->
+  <arg name="udp_ip" default="192.168.0.101"/>
+  <arg name="udp_port" default="4002"/>
+  <arg name="gps_topic" default="/mavros/global_position/global"/>
+  <!-- 事件驱动发送：每次有效 GPS 更新立即转发，发送频率即目标机 GPS 更新率；
+       min_interval 仅作异常高频限流保护（s）。 -->
+  <arg name="min_interval" default="0.05"/>
+  <arg name="stale_timeout" default="5.0"/>
+
+  <!-- ==================== 目标 GPS 转发节点 ==================== -->
+  <node name="target_gps_sender" pkg="sub_planning" type="target_gps_sender.py" output="screen">
+    <param name="udp_ip" value="$(arg udp_ip)"/>
+    <param name="udp_port" value="$(arg udp_port)"/>
+    <param name="gps_topic" value="$(arg gps_topic)"/>
+    <param name="min_interval" value="$(arg min_interval)"/>
+    <param name="stale_timeout" value="$(arg stale_timeout)"/>
+  </node>
+
+</launch>

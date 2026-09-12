@@ -2,7 +2,10 @@
 <launch>
   <!-- ==================== MAVROS 启动配置 ==================== -->
   <!-- 这一组参数用于指定 MAVROS 与 ArduSub 飞控的连接地址。 -->
+  <!-- 仿真使用 SITL UDP；实物实验通过 fcu_url 传入串口等实际连接，如：
+       roslaunch ... fcu_url:=/dev/ttyUSB0:115200 -->
+  <arg name="fcu_url" default="udp://127.0.0.1:14551@14555"/>
   <include file="$(find mavros)/launch/apm.launch">
-    <arg name="fcu_url" value="udp://127.0.0.1:14551@14555" />
+    <arg name="fcu_url" value="$(arg fcu_url)" />
   </include>
 </launch>

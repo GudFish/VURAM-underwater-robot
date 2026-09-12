@@ -6,10 +6,14 @@
   <arg name="vel_ctrl_rate" default="20.0" doc="publish rate of body velocity and yaw setpoints"/>
   <!-- show_rviz: 是否启动 RViz 可视化（批量实验设为 false 以节省内存/GPU） -->
   <arg name="show_rviz" default="true"/>
+  <!-- fcu_url: MAVROS 飞控连接地址（实物实验传串口等实际连接） -->
+  <arg name="fcu_url" default="udp://127.0.0.1:14551@14555"/>
 
   <!-- ==================== 基础飞控链路 ==================== -->
   <!-- 启动 MAVROS 与飞控通信链路。 -->
-  <include file="$(find sub_planning)/launch/apm.launch"/>
+  <include file="$(find sub_planning)/launch/apm.launch">
+    <arg name="fcu_url" value="$(arg fcu_url)"/>
+  </include>
 
   <!-- ==================== 边界加载节点 ==================== -->
   <!-- 这一组参数用于配置规划边界、仿真边界以及 RViz 边界标记的生成方式。 -->
