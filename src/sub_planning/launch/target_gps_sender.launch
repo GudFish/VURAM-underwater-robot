@@ -20,6 +20,13 @@
   <arg name="min_interval" default="0.05"/>
   <arg name="stale_timeout" default="5.0"/>
 
+    <!-- fcu_url: MAVROS 飞控连接地址（实物实验传串口等实际连接） -->
+  <arg name="fcu_url" default="/dev/ttyACM0:921600"/>
+
+  <include file="$(find sub_planning)/launch/apm.launch">
+    <arg name="fcu_url" value="$(arg fcu_url)"/>
+  </include>
+
   <!-- ==================== 目标 GPS 转发节点 ==================== -->
   <node name="target_gps_sender" pkg="sub_planning" type="target_gps_sender.py" output="screen">
     <param name="udp_ip" value="$(arg udp_ip)"/>
