@@ -36,6 +36,7 @@ import json
 import math
 import socket
 import threading
+import traceback
 
 import pymap3d as pm
 import rospy
@@ -88,6 +89,7 @@ class TargetGpsReceiver:
         self.robot_yaw = 0.0        # 机器人 ENU 航向角
         self.have_odom = False
         self.target_enu = None      # 目标 ENU 位置 (x, y, z)
+        self.last_gps_raw = None    # 最近一次收到的原始 GPS (lat, lon, alt)
         self.last_rx_time = None    # 最近一次收到目标 GPS 的时间
         self.msg_count = 0
         self.parse_error_count = 0
@@ -100,7 +102,19 @@ class TargetGpsReceiver:
         self.fix_pub = rospy.Publisher(self.fix_topic, NavSatFix, queue_size=10)
         self.debug_pub = rospy.Publisher(self.debug_topic, Float32MultiArray, queue_size=1)
 
-        # 6. 等待 home 位置（与 boundary_loader 相同的约定）
+        # 6. 启动 UDP 接收（先于 home 等待：原始 GPS 转发不依赖 home，
+        #    避免 home 未就绪时静默丢包，便于排查链路问题）
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind((self.bind_ip, self.udp_port))
+        self.sock.settimeout(0.1)
+        self.rx_thread = threading.Thread(target=self.rx_loop, daemon=True)
+        self.rx_thread.start()
+        rospy.loginfo('[TargetGpsReceiver] listening on UDP %s:%d, fix=%s',
+                      self.bind_ip, self.udp_port, self.fix_topic)
+
+        # 7. 等待 home 位置（与 boundary_loader 相同的约定；ENU 真值与
+        #    bearing 需要 home，等待期间 /target_gps/fix 已正常发布）
         rospy.loginfo('Waiting for home position from FCU...')
         rate = rospy.Rate(1)
         while self.home is None and not rospy.is_shutdown():
@@ -111,24 +125,19 @@ class TargetGpsReceiver:
         rospy.loginfo('Home position received: lat=%.7f, lon=%.7f, alt=%.2f',
                       self.home[0], self.home[1], self.home[2])
 
-        # 7. 启动 UDP 接收线程与发布定时器
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind((self.bind_ip, self.udp_port))
-        self.sock.settimeout(0.1)
-        self.rx_thread = threading.Thread(target=self.rx_loop, daemon=True)
-        self.rx_thread.start()
+        # 8. 启动 ENU 真值与 bearing 发布定时器
         rospy.Timer(rospy.Duration(1.0 / max(self.pose_publish_rate, 0.1)), self.pose_timer_cb)
         rospy.Timer(rospy.Duration(1.0 / max(self.bearing_publish_rate, 0.1)), self.bearing_timer_cb)
-        rospy.loginfo('[TargetGpsReceiver] listening on UDP %s:%d, pose=%s bearing=%s',
-                      self.bind_ip, self.udp_port, self.target_pose_topic, self.bearing_topic)
 
     # ------------------------------------------------------------------
     # 回调
     # ------------------------------------------------------------------
     def home_cb(self, msg):
-        """功能：缓存飞控 home 位置（GPS 转 ENU 的原点）。"""
+        """功能：缓存飞控 home 位置，并立即换算已缓存的最新目标 GPS。"""
         self.home = (msg.geo.latitude, msg.geo.longitude, msg.geo.altitude)
+        if self.last_gps_raw is not None:
+            self.target_enu = pm.geodetic2enu(self.last_gps_raw[0], self.last_gps_raw[1],
+                                              self.last_gps_raw[2], *self.home)
 
     def odom_cb(self, msg):
         """功能：缓存机器人 ENU 位置与航向角。"""
@@ -153,35 +162,59 @@ class TargetGpsReceiver:
             except OSError:
                 break
 
-            gps = self.parse_gps(data)
-            if gps is None:
-                self.parse_error_count += 1
-                rospy.logwarn_throttle(5.0, '[TargetGpsReceiver] unparsable datagram from %s (total %d): %r',
-                                       addr, self.parse_error_count, data[:64])
-                continue
+            # 单包异常不得终止接收线程（接收线程必须对坏数据免疫）
+            try:
+                self._handle_datagram(data, addr)
+            except Exception:
+                rospy.logerr_throttle(5.0,
+                                      '[TargetGpsReceiver] unhandled error processing datagram from %s:\n%s',
+                                      addr, traceback.format_exc())
 
-            self.target_enu = pm.geodetic2enu(gps[0], gps[1], gps[2], *self.home)
-            self.last_rx_time = rospy.Time.now()
-            self.msg_count += 1
+    def _handle_datagram(self, data, addr):
+        """功能：处理单条 UDP 报文：解析、转发原始 GPS、换算 ENU 并记录日志。"""
+        gps = self.parse_gps(data)
+        if gps is None:
+            self.parse_error_count += 1
+            rospy.logwarn_throttle(5.0, '[TargetGpsReceiver] unparsable datagram from %s (total %d): %r',
+                                   addr, self.parse_error_count, data[:64])
+            return
 
-            # 逐条转发原始目标 GPS（NavSatFix），供 rosbag 记录与离线分析
-            fix = NavSatFix()
-            fix.header.stamp = self.last_rx_time
-            fix.header.frame_id = 'gps'
-            fix.status.status = NavSatStatus.STATUS_FIX
-            fix.status.service = NavSatStatus.SERVICE_GPS
-            fix.latitude = gps[0]
-            fix.longitude = gps[1]
-            fix.altitude = gps[2]
-            self.fix_pub.publish(fix)
+        self.last_gps_raw = gps
+        self.last_rx_time = rospy.Time.now()
+        self.msg_count += 1
 
-            range_m, bearing = self._rel_range_bearing()
-            rospy.loginfo_throttle(5.0,
-                                   '[TargetGpsReceiver] GPS from %s (msg %d): lat=%.7f lon=%.7f alt=%.2f'
-                                   ' -> enu=(%.2f, %.2f) range=%.1f m bearing=%.2f deg',
-                                   addr, self.msg_count, gps[0], gps[1], gps[2],
-                                   self.target_enu[0], self.target_enu[1],
-                                   range_m, math.degrees(bearing))
+        # 逐条转发原始目标 GPS（NavSatFix，不依赖 home），供 rosbag 记录与离线分析
+        fix = NavSatFix()
+        fix.header.stamp = self.last_rx_time
+        fix.header.frame_id = 'gps'
+        fix.status.status = NavSatStatus.STATUS_FIX
+        fix.status.service = NavSatStatus.SERVICE_GPS
+        fix.latitude = gps[0]
+        fix.longitude = gps[1]
+        fix.altitude = gps[2]
+        self.fix_pub.publish(fix)
+
+        # ENU 转换依赖 home；距离/方位解算还需 odom
+        if self.home is None:
+            rospy.logwarn_throttle(5.0,
+                                   '[TargetGpsReceiver] GPS received but home not set yet, ENU/bearing delayed')
+            rospy.loginfo_throttle(5.0, '[TargetGpsReceiver] GPS from %s (msg %d): lat=%.7f lon=%.7f alt=%.2f',
+                                   addr, self.msg_count, gps[0], gps[1], gps[2])
+            return
+
+        self.target_enu = pm.geodetic2enu(gps[0], gps[1], gps[2], *self.home)
+        if not self.have_odom:
+            rospy.loginfo_throttle(5.0, '[TargetGpsReceiver] GPS from %s (msg %d): enu=(%.2f, %.2f) (no odom yet)',
+                                   addr, self.msg_count, self.target_enu[0], self.target_enu[1])
+            return
+
+        range_m, bearing = self._rel_range_bearing()
+        rospy.loginfo_throttle(5.0,
+                               '[TargetGpsReceiver] GPS from %s (msg %d): lat=%.7f lon=%.7f alt=%.2f'
+                               ' -> enu=(%.2f, %.2f) range=%.1f m bearing=%.2f deg',
+                               addr, self.msg_count, gps[0], gps[1], gps[2],
+                               self.target_enu[0], self.target_enu[1],
+                               range_m, math.degrees(bearing))
 
     def parse_gps(self, raw):
         """

@@ -421,22 +421,27 @@
   <!-- ====================================================================
    ██████  rosbag 记录  ██████
   ==================================================================== -->
-  <!-- 与实物实验同步记录关键话题，命名: {bag_dir}/{method}_real_{timestamp}.bag -->
+  <!-- 与实物实验同步记录关键话题，命名: {bag_dir}/{method}_real_{timestamp}.bag
+       话题按数据用途分组，覆盖真值、估计、控制、感知、规划与可视化回放全链路。 -->
   <arg name="image_topics" value="$(eval '/forward_sonar/image /forward_sonar/image_raw /forward_sonar/debug_image' if arg('record_images') else '')"/>
   <node if="$(arg record_bag)" name="rosbag_record" pkg="rosbag" type="record" output="screen"
         args="--lz4 -O $(arg bag_dir)/$(arg method)_real_$(anon ts).bag
-              /dynamic_target/pose /target_gps/debug /target_gps/fix
-              /mavros/state /mavros/local_position/odom /mavros/local_position/pose
-              /mavros/global_position/global
+              /dynamic_target/pose /dynamic_target/marker /target_gps/fix /target_gps/debug
               /target_acoustic_bearing
+              /target_estimate/pose /target_estimate/twist
+              /target_estimate/belief /target_estimate/pdaf_debug
+              /target_estimate/belief_marker
+              /mavros/state /mavros/home_position/home
+              /mavros/local_position/odom /mavros/local_position/pose
+              /mavros/global_position/global
+              /target_velocity_xy /target_yaw /target_velocity
+              /mavros/setpoint_raw/local /mavros/setpoint_raw/attitude
               /forward_sonar/measurement /forward_sonar/candidates
               /forward_sonar/scene_candidates /forward_sonar/obstacles
               /forward_sonar/detection_debug
-              /target_estimate/pose /target_estimate/twist
-              /target_estimate/belief /target_estimate/pdaf_debug
-              /target_velocity_xy /target_yaw
-              /planner/solver_time /planner/alpha
-              /planner/recovery_status
+              /planner/solver_time /planner/alpha /planner/recovery_status
+              /tf /tf_static
+              /boundary_loader/plan_visualization /boundary_loader/sim_visualization
               $(arg image_topics)"/>
 
 </launch>
