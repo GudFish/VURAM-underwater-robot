@@ -6,13 +6,15 @@
 
    用法：
      # 回放 bagfiles 目录下的文件（只写文件名即可）
-     roslaunch sub_planning rosbag_play.launch bag:=proposed_seed42_ts_xxx.bag
+     roslaunch sub_planning rosbag_play.launch bag:=proposed_seed55_ts_xxx.bag
      # 指定完整路径
      roslaunch sub_planning rosbag_play.launch bag:=/tmp/其他目录/xxx.bag
      # 2 倍速回放
-     roslaunch sub_planning rosbag_play.launch rate:=2 bag:=proposed_seed42_ts_xxx.bag
+     roslaunch sub_planning rosbag_play.launch rate:=2 bag:=proposed_seed55_ts_xxx.bag
      # 回放同时弹出前视声呐检测 debug 窗口（bag 需含 /forward_sonar/image）
-     roslaunch sub_planning rosbag_play.launch bag:=proposed_seed42_ts_xxx.bag sonar_debug:=true
+     roslaunch sub_planning rosbag_play.launch bag:=proposed_seed55_ts_xxx.bag sonar_debug:=true
+     # 回放同时把声呐 debug 图像录制为视频（默认 ~/video/{bag名}_sonar.avi）
+     roslaunch sub_planning rosbag_play.launch bag:=proposed_seed55_ts_xxx.bag record_sonar_video:=true
 
      USED NOW!!
      roslaunch sub_planning rosbag_play.launch rate:=5 sonar_debug:=true bag:=
@@ -28,6 +30,16 @@
                   target_tracking_simulation.launch 的
                   forward_sonar_debug_window 相同，需 bag 由
                   bag_images:=true 录制以包含 /forward_sonar/image）
+     record_sonar_video – 是否把声呐 debug 图像录制为视频（默认 false；
+                  直接录制 bag 回放出的 /forward_sonar/debug_image，
+                  与实验当时的检测叠加画面一致；bag 需含该话题。
+                  注意勿与 sonar_debug:=true 同开，否则检测器与 bag
+                  重复发布导致视频每帧重复两次）
+     sonar_video_file – 视频输出路径（默认 ~/video/{bag名}_sonar.avi）
+     sonar_video_fps  – 视频帧率（默认 10×rate，视频与屏幕同速；
+                        需要自然速度时覆盖 sonar_video_fps:=10）
+     sonar_video_topic– 录制话题（默认 /forward_sonar/debug_image，
+                  可改为 /forward_sonar/image 录原始声呐图）
      rviz_config – RViz 配置文件（默认 ardusub_display_topdown.rviz，
                   俯视正射视角 + 预设窗口大小；可改为
                   ardusub_display.rviz 恢复原视角）
@@ -38,6 +50,7 @@
   <arg name="loop" default="false"/>
   <arg name="clock" default="true"/>
   <arg name="sonar_debug" default="false"/>
+  <arg name="record_sonar_video" default="false"/>
   <!-- rviz_config: RViz 配置文件。默认使用俯视视角（正射投影）+ 预设窗口大小的
        ardusub_display_topdown.rviz；可改为 ardusub_display.rviz 恢复原视角 -->
   <arg name="rviz_config" default="$(find sub_planning)/config/ardusub_display_topdown.rviz"/>
@@ -46,11 +59,18 @@
        关闭后 RViz 中目标模型不显示，仅剩位姿坐标轴） -->
   <arg name="target_marker" default="true"/>
 
-  <!-- bag 路径解析：自动补全 .bag 后缀；非绝对路径时自动前缀 ~/ardupilot_ws/bagfiles/ -->
+  <!-- bag 路径解析：自动补全 .bag 后缀；非绝对路径时自动前缀 ~/ardupilot_ws/bagfiles/simulation -->
   <arg name="bag_file_resolved"
        value="$(eval arg('bag') if arg('bag').endswith('.bag') else arg('bag') + '.bag')"/>
+  <!-- 声呐视频录制参数：默认输出 ~/video/{bag名}_sonar.avi（取 basename 并去 .bag 后缀） -->
+  <arg name="sonar_video_file"
+       value="$(eval env('HOME') + '/video/' + 'sonar_' +arg('bag_file_resolved').split('/')[-1].replace('.bag', '') + '_sonar.avi')"/>
+  <!-- 声呐源 10Hz；倍速回放时帧到达速度 = 10×rate，写入帧率与之同步，
+       视频与屏幕同速；如需自然速度（快录慢放）可覆盖 sonar_video_fps:=10 -->
+  <arg name="sonar_video_fps" default="$(eval 10.0 * float(arg('rate')))"/>
+  <arg name="sonar_video_topic" default="/forward_sonar/debug_image"/>
   <arg name="bag_path"
-       value="$(eval arg('bag_file_resolved') if arg('bag_file_resolved').startswith('/') else env('HOME') + '/ardupilot_ws/bagfiles/' + arg('bag_file_resolved'))"/>
+       value="$(eval arg('bag_file_resolved') if arg('bag_file_resolved').startswith('/') else env('HOME') + '/ardupilot_ws/bagfiles/simulation/' + arg('bag_file_resolved'))"/>
   <!-- 条件开关：先解析为字符串再拼入节点参数 -->
   <arg name="clock_flag" value="$(eval '--clock' if arg('clock') else '')"/>
   <arg name="loop_flag" value="$(eval '--loop' if arg('loop') else '')"/>
@@ -77,6 +97,16 @@
     <arg name="enabled" value="true"/>
     <arg name="debug_window" value="true"/>
   </include>
+
+  <!-- 声呐 debug 图像视频录制（可选）：直接录制 bag 回放出的 debug_image。
+       回放结束时 roslaunch 统一关闭本节点，视频自动落盘。
+       注意：与 sonar_debug:=true 同开时，检测器与 bag 会重复发布
+       /forward_sonar/debug_image，导致视频每帧重复两次 -->
+  <node if="$(arg record_sonar_video)" name="sonar_video_recorder" pkg="image_view" type="video_recorder"
+        args="image:=$(arg sonar_video_topic)" output="screen">
+    <param name="filename" value="$(arg sonar_video_file)"/>
+    <param name="fps" value="$(arg sonar_video_fps)"/>
+  </node>
 
   <node pkg="rosbag" type="play" name="rosbag_play" output="screen" required="true"
         args="$(arg bag_path) $(arg clock_flag) $(arg loop_flag) --rate $(arg rate)"/>

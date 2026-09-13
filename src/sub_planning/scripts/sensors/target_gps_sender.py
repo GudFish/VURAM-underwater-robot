@@ -10,8 +10,13 @@
 target_gps_receiver 节点，报文格式为 CSV 文本 "lat,lon,alt"（与接收端解析
 约定一致）。发送频率即目标机 GPS 更新率，无定时器引入的额外延迟。
 
+两台机器的 IP 由 DHCP 动态分配，可能每次实验都不同。因此默认采用 UDP 广播
+发送（255.255.255.255）：机器人端接收节点绑定 0.0.0.0，无论其 IP 如何变化
+都能收到，目标端无需在启动时知道机器人 IP。如需单播，将 udp_ip 设为机器人
+当前实际 IP 即可。
+
 话题参数：
-  ~udp_ip        – 跟踪机器人 IP（默认 192.168.0.101）
+  ~udp_ip        – 目标地址（默认 255.255.255.255 广播；单播时填机器人当前 IP）
   ~udp_port      – 目标端口（默认 4002，与 target_gps_receiver 一致）
   ~gps_topic     – 目标自身 GPS 话题（默认 /mavros/global_position/global）
   ~min_interval  – 两次发送的最小间隔 s，仅作异常高频限流保护（默认 0.05）
@@ -37,7 +42,7 @@ class TargetGpsSender:
         """
         rospy.init_node('target_gps_sender')
 
-        self.udp_ip = rospy.get_param('~udp_ip', '192.168.0.101')
+        self.udp_ip = rospy.get_param('~udp_ip', '255.255.255.255')
         self.udp_port = int(rospy.get_param('~udp_port', 4002))
         self.gps_topic = rospy.get_param('~gps_topic', '/mavros/global_position/global')
         self.min_interval = float(rospy.get_param('~min_interval', 0.05))
@@ -48,11 +53,14 @@ class TargetGpsSender:
         self.last_send_time = None
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # 允许广播发送：目标地址为 255.255.255.255 时无需知道机器人 IP
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         rospy.Subscriber(self.gps_topic, NavSatFix, self.gps_cb, queue_size=1)
         # 低频定时器仅用于 GPS 失效告警，不参与数据发送
         rospy.Timer(rospy.Duration(1.0), self.stale_warn_timer_cb)
-        rospy.loginfo('[TargetGpsSender] event-driven forwarding %s -> UDP %s:%d',
-                      self.gps_topic, self.udp_ip, self.udp_port)
+        mode = 'broadcast' if self.udp_ip == '255.255.255.255' else 'unicast'
+        rospy.loginfo('[TargetGpsSender] event-driven forwarding %s -> UDP %s:%d (%s)',
+                      self.gps_topic, self.udp_ip, self.udp_port, mode)
 
     def gps_cb(self, msg):
         """
