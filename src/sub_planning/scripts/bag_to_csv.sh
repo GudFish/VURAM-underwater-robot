@@ -28,7 +28,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 BAG_INPUT="$HOME/ardupilot_ws/bagfiles"
-OUTPUT_DIR="$HOME/sub_planning_metrics"
+OUTPUT_DIR="$HOME/ardupilot_ws/results/sub_planning_metrics"
 RATE=10
 
 while [[ $# -gt 0 ]]; do

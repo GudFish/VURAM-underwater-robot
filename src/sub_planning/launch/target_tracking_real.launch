@@ -25,6 +25,11 @@
   <!-- method: 跟踪方法 — proposed | b1_bearing_only | b2_ce_nmpc -->
   <arg name="method" default="proposed"/>
 
+  <!-- 实物实验使用墙钟时间：显式关闭 use_sim_time，避免残留的仿真时钟
+       参数（如上次 bag 回放遗留）使 metrics_logger 的 t_sec 变成
+       Unix 时间戳 -->
+  <param name="/use_sim_time" value="false"/>
+
   <!-- ==================== 飞控连接参数 ==================== -->
   <!-- fcu_url: MAVROS 飞控连接地址。实物实验按实际连接传入，如：
        fcu_url:=/dev/ttyUSB0:115200（串口）或 tcp://...（网络） -->

@@ -17,7 +17,7 @@
      roslaunch sub_planning rosbag_play.launch bag:=proposed_seed55_ts_xxx.bag record_sonar_video:=true
 
      USED NOW!!
-     roslaunch sub_planning rosbag_play.launch rate:=5 sonar_debug:=true bag:=
+     roslaunch sub_planning rosbag_play.launch rate:=5 sonar_debug:=true bag:=simulation/xx
 
 
    参数：
@@ -59,7 +59,7 @@
        关闭后 RViz 中目标模型不显示，仅剩位姿坐标轴） -->
   <arg name="target_marker" default="true"/>
 
-  <!-- bag 路径解析：自动补全 .bag 后缀；非绝对路径时自动前缀 ~/ardupilot_ws/bagfiles/simulation -->
+  <!-- bag 路径解析：自动补全 .bag 后缀；非绝对路径时自动前缀 ~/ardupilot_ws/bagfiles -->
   <arg name="bag_file_resolved"
        value="$(eval arg('bag') if arg('bag').endswith('.bag') else arg('bag') + '.bag')"/>
   <!-- 声呐视频录制参数：默认输出 ~/video/{bag名}_sonar.avi（取 basename 并去 .bag 后缀） -->
@@ -70,7 +70,7 @@
   <arg name="sonar_video_fps" default="$(eval 10.0 * float(arg('rate')))"/>
   <arg name="sonar_video_topic" default="/forward_sonar/debug_image"/>
   <arg name="bag_path"
-       value="$(eval arg('bag_file_resolved') if arg('bag_file_resolved').startswith('/') else env('HOME') + '/ardupilot_ws/bagfiles/simulation/' + arg('bag_file_resolved'))"/>
+       value="$(eval arg('bag_file_resolved') if arg('bag_file_resolved').startswith('/') else env('HOME') + '/ardupilot_ws/bagfiles/' + arg('bag_file_resolved'))"/>
   <!-- 条件开关：先解析为字符串再拼入节点参数 -->
   <arg name="clock_flag" value="$(eval '--clock' if arg('clock') else '')"/>
   <arg name="loop_flag" value="$(eval '--loop' if arg('loop') else '')"/>

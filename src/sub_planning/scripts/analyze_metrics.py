@@ -28,8 +28,8 @@
   CSV 文件名格式为 {method}_seed{seed}_{timestamp}.csv，脚本会打印
   图1-6 数据来源的随机种子；用 --run N 选择每个方法按文件名排序后的
   第 N 次运行（默认 0）。所有图片不绘制标题。
-  图片输出为 PDF 矢量格式（fig1~fig10）；每张图的尺寸与边距通过
-  文件顶部的 FIGURE_CONFIG 配置独立调整。
+  每张图同时输出 PDF 矢量格式与 PNG 位图（300 dpi，同名不同扩展名）；
+  每张图的尺寸与边距通过文件顶部的 FIGURE_CONFIG 配置独立调整。
 """
 import argparse
 import glob
@@ -188,6 +188,14 @@ def style_axes(ax):
     ax.spines['right'].set_visible(False)
 
 
+def save_fig(fig, fname, output_dir):
+    """同时保存 PDF（矢量）与 PNG（300 dpi 位图），同名不同扩展名。"""
+    base = os.path.splitext(fname)[0]
+    fig.savefig(os.path.join(output_dir, base + '.pdf'))
+    fig.savefig(os.path.join(output_dir, base + '.png'), dpi=300)
+    print('  -> {}.pdf / {}.png'.format(base, base))
+
+
 
 # ====================================================================
 #  图1-3：轨迹图
@@ -293,9 +301,8 @@ def plot_trajectory(frame, method, bounds, output_dir):
                         top=cfg['top'], bottom=cfg['bottom'])
 
     fname = 'fig{}_trajectory_{}.pdf'.format(METHODS.index(method) + 1, method)
-    fig.savefig(os.path.join(output_dir, fname))
+    save_fig(fig, fname, output_dir)
     plt.close(fig)
-    print('  -> {}'.format(fname))
 
 
 # ====================================================================
@@ -328,9 +335,8 @@ def plot_timeline(data, run_idx, column, ylabel, fname, output_dir,
     # 尺寸/边距调整：见文件顶部 FIGURE_CONFIG 配置
     fig.subplots_adjust(left=cfg['left'], right=cfg['right'],
                         top=cfg['top'], bottom=cfg['bottom'])
-    fig.savefig(os.path.join(output_dir, fname))
+    save_fig(fig, fname, output_dir)
     plt.close(fig)
-    print('  -> {}'.format(fname))
 
 
 # ====================================================================
@@ -404,9 +410,8 @@ def plot_bars(stats, ylabel, fname, output_dir):
     # 尺寸/边距调整：见文件顶部 FIGURE_CONFIG 配置
     fig.subplots_adjust(left=cfg['left'], right=cfg['right'],
                         top=cfg['top'], bottom=cfg['bottom'])
-    fig.savefig(os.path.join(output_dir, fname))
+    save_fig(fig, fname, output_dir)
     plt.close(fig)
-    print('  -> {}'.format(fname))
 
 
 def print_stat_table(all_stats):
@@ -457,9 +462,9 @@ def parse_range(text):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('-i', '--input', default=os.path.expanduser('~/sub_planning_metrics'),
+    parser.add_argument('-i', '--input', default=os.path.expanduser('~/ardupilot_ws/results/sub_planning_metrics'),
                         help='CSV 输入目录（默认 ~/sub_planning_metrics）')
-    parser.add_argument('-o', '--output', default=os.path.expanduser('~/sub_planning_metrics/figures'),
+    parser.add_argument('-o', '--output', default=os.path.expanduser('~/ardupilot_ws/results/sub_planning_metrics/figures'),
                         help='图表输出目录')
     parser.add_argument('--run', type=int, default=1,
                         help='图1-6 使用每个方法按文件名排序后的第 N 次运行（默认 0）')

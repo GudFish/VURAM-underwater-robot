@@ -72,11 +72,17 @@ class MetricsLogger:
         rospy.Subscriber(rospy.get_param('~obstacle_gt_topic', '/dynamic_obstacles/markers'), MarkerArray,
                          self._obstacle_cb, queue_size=2)
 
-        timestamp = time.strftime('%Y%m%d_%H%M%S')
-        if self.random_seed >= 0:
-            csv_name = '{0}_seed{1}_{2}.csv'.format(self.method_name, self.random_seed, timestamp)
-        else:
-            csv_name = '{}_{}.csv'.format(self.method_name, timestamp)
+        # 可选精确文件名（回放恢复工具用，如与 bag 同名，仅扩展名不同）。
+        # 未设置时保持默认命名 {method}_seed{seed}_{时间戳}.csv / {method}_{时间戳}.csv
+        csv_name = rospy.get_param('~csv_name', '')
+        if not csv_name:
+            timestamp = time.strftime('%Y%m%d_%H%M%S')
+            if self.random_seed >= 0:
+                csv_name = '{0}_seed{1}_{2}.csv'.format(self.method_name, self.random_seed, timestamp)
+            else:
+                csv_name = '{}_{}.csv'.format(self.method_name, timestamp)
+        elif not csv_name.endswith('.csv'):
+            csv_name += '.csv'
         self.csv_path = os.path.join(self.output_dir, csv_name)
         self.csv_file = open(self.csv_path, 'w', newline='')
         self.writer = csv.writer(self.csv_file)

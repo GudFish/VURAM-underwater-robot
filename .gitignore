@@ -39,3 +39,5 @@ dist/
 .agents/
 .claude/
 .codex/
+
+results/
