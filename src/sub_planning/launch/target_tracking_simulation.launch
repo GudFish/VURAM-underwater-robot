@@ -25,11 +25,11 @@
 
   <!-- ==================== rosbag 记录参数 ==================== -->
   <!-- record_bag: 是否同步记录 rosbag（默认开启） -->
-  <arg name="record_bag" default="true"/>
+  <arg name="record_bag" default="false"/>
   <!-- bag_dir: bag 输出目录 -->
   <arg name="bag_dir" default="$(env HOME)/ardupilot_ws/bagfiles"/>
   <!-- bag_images: 是否记录声呐图像话题（体积大，可关闭） -->
-  <arg name="bag_images" default="True"/>
+  <arg name="bag_images" default="false"/>
 
   <!-- ==================== 指标输出参数 ==================== -->
   <!-- output_dir: metrics CSV 输出目录（持久化，重启不丢失） -->
@@ -52,7 +52,7 @@
   ==================================================================== -->
 
   <!-- ==================== 1. 基础控制链路 ==================== -->
-  <include file="$(find sub_planning)/launch/common_vehicle_control.launch">
+  <include file="$(find vuram_control)/launch/common_vehicle_control.launch">
     <arg name="pos_ctrl" value="False"/>
     <arg name="vel_ctrl_rate" value="20.0"/>
     <arg name="depth_mux" value="True"/>
@@ -63,7 +63,7 @@
 
   <!-- ==================== 1.5. 自动 ARM 节点 ==================== -->
   <!-- 等待场景（目标/障碍物）就绪后再延迟 5s 自动 GUIDED + ARM。 -->
-  <node name="auto_arm_guided" pkg="sub_planning" type="auto_arm_guided.py" output="screen">
+  <node name="auto_arm_guided" pkg="vuram_control" type="auto_arm_guided.py" output="screen">
     <param name="arm_delay" value="5.0"/>
     <param name="retry_timeout" value="30.0"/>
     <param name="scene_timeout" value="60.0"/>
@@ -87,13 +87,13 @@
 
   <!-- ==================== 5. 前视声呐仿真 ==================== -->
   <!-- b1_bearing_only 不启用声呐通道（无声呐感知、无声呐融合）。 -->
-  <include if="$(eval arg('forward_sonar') and arg('method') != 'b1_bearing_only')" file="$(find sub_planning)/launch/forward_sonar_sim.launch">
+  <include if="$(eval arg('forward_sonar') and arg('method') != 'b1_bearing_only')" file="$(find fls_detector)/launch/forward_sonar_sim.launch">
     <arg name="show_window" value="$(arg forward_sonar_window)"/>
     <arg name="random_seed" value="$(arg random_seed)"/>
   </include>
 
   <!-- ==================== 6. 声呐目标检测（可复用 launch） ==================== -->
-  <include file="$(find sub_planning)/launch/sonar_target_detector.launch">
+  <include file="$(find fls_detector)/launch/sonar_target_detector.launch">
     <arg name="enabled" value="$(eval arg('forward_sonar') and arg('method') != 'b1_bearing_only')"/>
     <arg name="debug_window" value="$(arg forward_sonar_debug_window)"/>
   </include>

@@ -25,7 +25,7 @@
     <!-- fcu_url: MAVROS 飞控连接地址（实物实验传串口等实际连接） -->
   <arg name="fcu_url" default="/dev/ttyACM0:921600"/>
 
-  <include file="$(find sub_planning)/launch/apm.launch">
+  <include file="$(find vuram_control)/launch/apm.launch">
     <arg name="fcu_url" value="$(arg fcu_url)"/>
   </include>
 

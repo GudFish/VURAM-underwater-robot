@@ -1,0 +1,45 @@
+{
+  "schema_version": 2,
+  "policy_version": 75,
+  "dt": 0.05,
+  "omega_max": 1.0,
+  "obs_dim": 22,
+  "obs_layout": {
+    "e_pos": {
+      "start": 0,
+      "len": 3
+    },
+    "e_att": {
+      "start": 3,
+      "len": 3
+    },
+    "v_body": {
+      "start": 6,
+      "len": 6
+    },
+    "v_ref_lin": {
+      "start": 12,
+      "len": 3
+    },
+    "w_ref_z": {
+      "start": 15,
+      "len": 1
+    },
+    "a_prev": {
+      "start": 16,
+      "len": 6
+    }
+  },
+  "s_dim": 12,
+  "a_dim": 6,
+  "policy": {
+    "hidden": [
+      256,
+      256
+    ],
+    "activation": "silu"
+  },
+  "normalizer": {
+    "present_in_module": true
+  }
+}

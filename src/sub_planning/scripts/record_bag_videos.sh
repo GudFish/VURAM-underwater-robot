@@ -156,7 +156,7 @@ for bag in "${BAGS[@]}"; do
 
     # ---------- 1. 声呐显示窗口 + 声呐视频录制（在回放开始前挂上订阅） ----------
     if [ "${HAS_SONAR}" = true ]; then
-        rosrun sub_planning forward_sonar_image_viewer.py \
+        rosrun fls_detector forward_sonar_image_viewer.py \
             _image_topic:=${SONAR_TOPIC} \
             _window_name:="Forward Sonar Detection Debug" \
             _colormap:=true _display_scale:=1.4 \

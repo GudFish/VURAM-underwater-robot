@@ -1,0 +1,61 @@
+# Single source of truth for the observation/action spec of the test node.
+# Mirrors the MuJoCo training spec (~/mujoco_auv_env/config/obs_act.yaml) --
+# the obs_layout below is exactly what the exported policy was trained with.
+# The test node consumes: dt/control_rate, a_dim, s_dim, obs_dim/obs_layout,
+# termination, twist_in_world. The imu block and reward_weights are kept for
+# spec fidelity; no model consumes the IMU since the GRU encoder removal.
+
+dt: 0.05            # control period [s]
+control_rate: 20    # [Hz]; matches /vuram/pose_gt exactly (no interpolation)
+omega_max: 1.0      # rotor angular velocity at |a| = 1 [rad/s] (= full thrust 50 N)
+
+a_dim: 6
+a_range: [-1.0, 1.0]
+
+# Dynamics state s = [u, v, w, p, q, r, roll, pitch, yaw, x, y, z]
+# body lin velocity | body ang velocity | attitude (rpy) | world pos (ENU)
+s_dim: 12
+body_lin_vel: [0, 3]
+body_ang_vel: [3, 6]
+att:          [6, 9]
+pos:          [9, 12]
+
+# IMU window recorded by the sensor suite (episode data record only since
+# the GRU encoder removal; no model consumes it). Consecutive 20 Hz steps
+# advance ~2.5 samples -> windows overlap. Zero-padded before `window`
+# samples exist (episode start).
+imu:
+  rate: 50          # [Hz], /vuram/imu
+  window: 30        # samples (0.6 s)
+  channels: [accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z]
+imu_dim: 6
+
+# Policy observation = [e_pos(3), e_att(3), v_body(6), v_ref_lin(3), w_ref_z(1), a_prev(6)]
+obs_dim: 22
+obs_layout:
+  e_pos:     {start: 0,  len: 3}    # pos_ref - pos, world ENU
+  e_att:     {start: 3,  len: 3}    # wrap(rpy_ref - rpy); ref roll/pitch are 0
+  v_body:    {start: 6,  len: 6}    # body-frame lin+ang velocity
+  v_ref_lin: {start: 12, len: 3}    # reference linear velocity, world ENU
+  w_ref_z:   {start: 15, len: 1}    # reference yaw rate
+  a_prev:    {start: 16, len: 6}    # previous normalized action (zeros at episode start)
+
+# yaw is a dedicated term: the vehicle heading must follow the xy-projected
+# tangent of the reference trajectory (direction of travel)
+reward_weights: {pos: 1.0, att: 0.1, vel: 0.05, yaw: 0.5, act: 0.01}
+
+termination:
+  max_pos_err: 3.0    # [m]; hopeless episodes are cut early (bad-trajectory
+                      # pruning, cf. the SuperDyno paper)
+  surface_z: -1.0     # [m]; z above this means surfaced
+  max_tilt: 1.2       # [rad]
+  grace_steps: 60     # steps (3 s) before max_pos_err/max_tilt pruning
+                      # applies after the teleport: spawn errors reach
+                      # ~4.2 m and the PD/policy needs time to converge
+
+# State source twist convention: Gazebo pose_3d reports twist in the WORLD
+# frame (ENU), but /mavros/local_position/odom reports twist in the BODY
+# frame (ENU axes: x forward / y left / z up). Keep false on the ArduSub
+# stack. Validate with a pure-surge run (state.u large, v/w ~ 0); flip if
+# wrong.
+twist_in_world: false

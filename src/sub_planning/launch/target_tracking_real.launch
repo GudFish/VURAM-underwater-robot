@@ -85,7 +85,7 @@
   <!-- ==================== 1. 基础控制链路（真实飞控） ==================== -->
   <!-- 仅水平面跟踪：depth_ctrl_enable=False 使定深复用节点强制 z 方向速度
        指令输出为 0（机器人 z 由飞控自身保持，规划器不进行 z 方向控制）。 -->
-  <include file="$(find sub_planning)/launch/common_vehicle_control.launch">
+  <include file="$(find vuram_control)/launch/common_vehicle_control.launch">
     <arg name="pos_ctrl" value="False"/>
     <arg name="vel_ctrl_rate" value="20.0"/>
     <arg name="depth_mux" value="True"/>
@@ -113,7 +113,7 @@
 
   <!-- ==================== 1.6. 自动 ARM 节点（可选） ==================== -->
   <!-- 收到首个目标 GPS（/dynamic_target/pose）后延迟 5s 自动 GUIDED + ARM。 -->
-  <node if="$(arg auto_arm)" name="auto_arm_guided" pkg="sub_planning" type="auto_arm_guided.py" output="screen">
+  <node if="$(arg auto_arm)" name="auto_arm_guided" pkg="vuram_control" type="auto_arm_guided.py" output="screen">
     <param name="arm_delay" value="5.0"/>
     <param name="retry_timeout" value="30.0"/>
     <param name="scene_timeout" value="60.0"/>
@@ -144,7 +144,7 @@
   <include file="$(find sub_planning)/launch/target_belief_viz.launch"/>
 
   <!-- ==================== 4. 声呐量程扇形可视化 ==================== -->
-  <node if="$(arg sonar_enable)" name="forward_sonar_range_viz" pkg="sub_planning" type="forward_sonar_range_viz.py" output="screen">
+  <node if="$(arg sonar_enable)" name="forward_sonar_range_viz" pkg="fls_detector" type="forward_sonar_range_viz.py" output="screen">
     <param name="robot_odom_topic" value="/mavros/local_position/odom"/>
     <param name="marker_topic" value="/forward_sonar/markers"/>
     <param name="publish_rate" value="$(arg sonar_publish_rate)"/>
@@ -154,7 +154,7 @@
   </node>
 
   <!-- ==================== 5. 声呐目标检测（可复用 launch，真实图像） ==================== -->
-  <include file="$(find sub_planning)/launch/sonar_target_detector.launch">
+  <include file="$(find fls_detector)/launch/sonar_target_detector.launch">
     <arg name="enabled" value="$(eval arg('sonar_enable') and arg('method') != 'b1_bearing_only')"/>
     <arg name="debug_window" value="$(eval arg('sonar_enable') and arg('method') != 'b1_bearing_only' and arg('sonar_debug_window'))"/>
     <arg name="fov_deg" value="$(arg sonar_fov_deg)"/>
@@ -174,7 +174,7 @@
   <node if="$(arg show_target_marker)" name="target_marker_republisher" pkg="sub_planning" type="target_marker_republisher.py" output="screen"/>
 
   <!-- ==================== 8. 声呐图像显示 ==================== -->
-  <node if="$(eval arg('sonar_enable') and arg('sonar_window'))" name="forward_sonar_image_viewer" pkg="sub_planning" type="forward_sonar_image_viewer.py" output="screen">
+  <node if="$(eval arg('sonar_enable') and arg('sonar_window'))" name="forward_sonar_image_viewer" pkg="fls_detector" type="forward_sonar_image_viewer.py" output="screen">
     <param name="image_topic" value="/forward_sonar/image"/>
     <param name="window_name" value="Forward Looking Sonar (Real)"/>
     <param name="colormap" value="true"/>

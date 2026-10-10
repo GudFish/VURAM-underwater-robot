@@ -53,7 +53,7 @@
   <arg name="record_sonar_video" default="false"/>
   <!-- rviz_config: RViz 配置文件。默认使用俯视视角（正射投影）+ 预设窗口大小的
        ardusub_display_topdown.rviz；可改为 ardusub_display.rviz 恢复原视角 -->
-  <arg name="rviz_config" default="$(find sub_planning)/config/ardusub_display_topdown.rviz"/>
+  <arg name="rviz_config" default="$(find vuram_control)/config/ardusub_display_topdown.rviz"/>
   <!-- target_marker: 回放时由 /dynamic_target/pose 重发布目标网格 marker
        （bag 未录制 /dynamic_target/marker，仿真中该 marker 由目标节点发布；
        关闭后 RViz 中目标模型不显示，仅剩位姿坐标轴） -->
@@ -79,7 +79,7 @@
   <param if="$(arg clock)" name="/use_sim_time" value="true"/>
 
   <!-- RViz 可视化（机器人模型 + TF），视角与窗口大小由 rviz_config 决定 -->
-  <include file="$(find sub_planning)/launch/rviz.launch">
+  <include file="$(find vuram_control)/launch/rviz.launch">
     <arg name="display_config" value="$(arg rviz_config)"/>
   </include>
 
@@ -93,7 +93,7 @@
 
   <!-- 声呐检测 debug 窗口（可选）：重放 /forward_sonar/image 并运行检测器，
        弹出与 target_tracking_simulation.launch 相同的检测叠加窗口 -->
-  <include if="$(arg sonar_debug)" file="$(find sub_planning)/launch/sonar_target_detector.launch">
+  <include if="$(arg sonar_debug)" file="$(find fls_detector)/launch/sonar_target_detector.launch">
     <arg name="enabled" value="true"/>
     <arg name="debug_window" value="true"/>
   </include>

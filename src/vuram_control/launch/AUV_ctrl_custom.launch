@@ -1,0 +1,72 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 该launch启动的是通过CUSTOM映射，将6DOF指令映射到独立的6个推进器，
+       用于在arm/disarm管控下的推进器独立控制。
+       但如果推进器数量大于6个，则可能无法使用 -->
+
+  <!-- ==================== 启动开关参数 ==================== -->
+  <!-- show_rviz: 是否启动 RViz 可视化（批量实验设为 false 以节省内存/GPU） -->
+  <arg name="show_rviz" default="true"/>
+  <!-- fcu_url: MAVROS 飞控连接地址（实物实验传串口等实际连接） -->
+  <arg name="fcu_url" default="udp://127.0.0.1:14551@14555"/>
+
+  <!-- setup_fc: 启动时自动配置飞控参数。默认 true：本模式必需 FRAME_CONFIG=7，
+       脚本自动设置并校验（幂等：值已正确时快速跳过，参数持久化后也可设 false）。
+       true 时设置 SYSID_MYGCS=1、SERVO1~6_FUNCTION=33~38、FRAME_CONFIG=7。
+       注意：FRAME_CONFIG 在飞控启动时加载，首次从其他构型切换到 7 后
+       需重启飞控才生效（改回其他构型同理）。 -->
+  <arg name="setup_fc" default="false"/>
+
+  <!-- ==================== 基础飞控链路 ==================== -->
+  <!-- 启动 MAVROS 与飞控通信链路。 -->
+  <include file="$(find vuram_control)/launch/apm.launch">
+    <arg name="fcu_url" value="$(arg fcu_url)"/>
+  </include>
+
+  <!-- ==================== 边界加载节点 ==================== -->
+  <!-- 这一组参数用于配置规划边界、仿真边界以及 RViz 边界标记的生成方式。 -->
+  <node name="boundary_loader" pkg="vuram_control" type="boundary_loader.py" output="screen">
+    <!-- 边界顶点来源：从 YAML 文件加载原始 GPS 边界点。 -->
+    <rosparam command="load" file="$(find vuram_control)/config/boundary_points.yaml" />
+
+    <!-- 仿真边界形状参数：控制仿真边界的外扩、平滑和起伏效果。 -->
+    <param name="sim_boundary_margin" value="3.0"/>
+    <param name="sim_boundary_smoothness" value="0.9"/>
+    <param name="sim_boundary_resolution" value="160"/>
+    <param name="sim_boundary_variation" value="30"/>
+    <param name="sim_boundary_min_clearance_ratio" value="0.22"/>
+    <param name="sim_boundary_max_clearance_ratio" value="0.58"/>
+
+    <!-- 边界可视化参数：控制规划边界和仿真边界在 RViz 中的线宽与透明度。 -->
+    <param name="plan_marker_width" value="0.18"/>
+    <param name="plan_marker_alpha" value="0.35"/>
+    <param name="sim_marker_width" value="0.42"/>
+    <param name="sim_marker_alpha" value="0.95"/>
+  </node>
+
+  <!-- ==================== 预留节点 ==================== -->
+  <!-- 这里保留了动态目标与旧版跟踪节点的启动位置，当前默认不启用。 -->
+  <!-- <node name="dynamic_target_generator" pkg="sub_planning" type="dynamic_target_generator.py" output="screen"/>
+
+  <node name="target_tracking_pos" pkg="sub_planning" type="target_tracking_pos.py" output="screen"/> -->
+
+  <!-- ==================== 逐推进器直控节点（固件 CUSTOM 1:1 帧 + RC override） ==================== -->
+  <!-- 前提：飞控已刷入 CUSTOM 帧单位阵混控的固件（AP_Motors6DOF.cpp SUB_FRAME_CUSTOM），
+       且 FRAME_CONFIG=7（本 launch 通过 frame_config 参数自动设置）。
+       输入 /dof_cmd（µs×6，1100~1900，1500 中立），逐通道 1:1 映射到 MOTOR1~6：
+         CH1→M1  CH2→M2  CH3→M3  CH4→M4  CH5→M5  CH6→M6
+       保留完整 arm 门控与 failsafe 框架：未解锁无输出；节点死掉后 override
+       过期（RC_OVERRIDE_TIME=3s）→ FS_PILOT_INPUT=2 自动 disarm。
+       acro_yaw_p=4.5 自动消除 yaw 通道的 ACRO_YAW_P/4.5 缩放（1:1）；
+       M3（CH3）解锁后有短暂 spool 爬升；MOT_x_DIRECTION 反转参数仍生效。 -->
+  <node name="set_6dof_cmd" pkg="vuram_control" type="set_6dof_cmd.py" output="screen">
+    <param name="setup_fc_params" type="bool" value="$(arg setup_fc)"/>
+    <param name="frame_config" type="int" value="7"/>
+    <param name="acro_yaw_p" type="double" value="4.5"/>
+  </node>
+
+
+  <!-- ==================== 可视化 ==================== -->
+  <!-- 启动 RViz、模型发布和 TF 广播链路（批量实验可关闭）。 -->
+  <include if="$(arg show_rviz)" file="$(find vuram_control)/launch/rviz.launch"/>
+</launch>

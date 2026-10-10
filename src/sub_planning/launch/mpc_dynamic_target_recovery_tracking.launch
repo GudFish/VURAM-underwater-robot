@@ -11,7 +11,7 @@
 
   <!-- ==================== 基础控制链路 ==================== -->
   <!-- 启动飞控通信、速度控制与定深复用控制链路。 -->
-  <include file="$(find sub_planning)/launch/common_vehicle_control.launch">
+  <include file="$(find vuram_control)/launch/common_vehicle_control.launch">
     <arg name="pos_ctrl" value="False"/>
     <arg name="vel_ctrl_rate" value="20.0"/>
     <arg name="depth_mux" value="True"/>
@@ -28,13 +28,13 @@
     <arg name="random_seed" value="$(arg random_seed)"/>
   </include>
   <include file="$(find sub_planning)/launch/target_belief_viz.launch"/>
-  <include if="$(arg forward_sonar)" file="$(find sub_planning)/launch/forward_sonar_sim.launch">
+  <include if="$(arg forward_sonar)" file="$(find fls_detector)/launch/forward_sonar_sim.launch">
     <arg name="show_window" value="$(arg forward_sonar_window)"/>
     <arg name="random_seed" value="$(arg random_seed)"/>
   </include>
 
   <!-- ==================== 声呐目标检测（可复用 launch） ==================== -->
-  <include file="$(find sub_planning)/launch/sonar_target_detector.launch">
+  <include file="$(find fls_detector)/launch/sonar_target_detector.launch">
     <arg name="enabled" value="$(arg forward_sonar)"/>
     <arg name="debug_window" value="$(arg forward_sonar_debug_window)"/>
   </include>

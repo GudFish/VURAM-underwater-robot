@@ -52,7 +52,7 @@ class DynamicTargetGenerator:
         self.target_marker_topic = rospy.get_param('~target_marker_topic', '/dynamic_target/marker')
         self.target_mesh_resource = rospy.get_param(
             '~target_mesh_resource',
-            'package://sub_planning/meshes/AUV.STL',
+            'package://vuram_description/meshes/AUV.STL',
         )
         self.target_mesh_scale = float(rospy.get_param('~target_mesh_scale', 1.0))
         self.target_mesh_z = float(rospy.get_param('~target_mesh_z', 0.0))

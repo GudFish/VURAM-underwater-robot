@@ -28,7 +28,7 @@
   <!-- 这一组参数定义动态目标位姿与目标网格可视化的输出接口。 -->
   <arg name="target_pose_topic" default="/dynamic_target/pose"/>
   <arg name="target_marker_topic" default="/dynamic_target/marker"/>
-  <arg name="target_mesh_resource" default="package://sub_planning/meshes/AUV.STL"/>
+  <arg name="target_mesh_resource" default="package://vuram_description/meshes/AUV.STL"/>
   <arg name="target_mesh_scale" default="1.0"/>
   <arg name="target_mesh_z" default="0.0"/>
 

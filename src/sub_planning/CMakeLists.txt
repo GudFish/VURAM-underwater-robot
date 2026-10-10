@@ -164,8 +164,6 @@ include_directories(
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
 catkin_install_python(PROGRAMS
-  scripts/control/set_body_vel_yaw.py
-  scripts/control/depth_hold_velocity_mux.py
   scripts/planners/mpc_2d_planner.py
   scripts/planners/mpc_dynamic_target_tracker.py
   scripts/planners/mpc_belief_target_tracker.py
@@ -173,10 +171,6 @@ catkin_install_python(PROGRAMS
   scripts/planners/los_target_tracker.py
   scripts/sensors/acoustic_tdoa_sensor_sim.py
   scripts/sensors/tdoa_bearing_estimator.py
-  scripts/sensors/forward_sonar_sim.py
-  scripts/sensors/forward_sonar_target_detector.py
-  scripts/sensors/batch_sonar_image_detector.py
-  scripts/sensors/sonar_separation_heatmap.py
   scripts/sensors/target_gps_receiver.py
   scripts/sensors/target_gps_sender.py
   scripts/visualization/target_belief_viz.py
@@ -184,15 +178,9 @@ catkin_install_python(PROGRAMS
   scripts/estimators/target_bearing_window_ls.py
   scripts/demos/fossen_model_demo.py
   scripts/demos/target_gps_announcer.py
-  scripts/control/set_local_position.py
-  scripts/visualization/tf_baselink_map_node.py
-  scripts/visualization/boundary_loader.py
-  scripts/visualization/forward_sonar_range_viz.py
-  scripts/visualization/forward_sonar_image_viewer.py
   scripts/visualization/target_marker_republisher.py
   scripts/planners/dynamic_target_generator.py
   scripts/utils/metrics_logger.py
-  scripts/utils/auto_arm_guided.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

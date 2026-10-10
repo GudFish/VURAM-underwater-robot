@@ -14,7 +14,7 @@ target_marker_republisher.py
 话题参数：
   ~pose_topic    – 目标位姿话题（默认 /dynamic_target/pose）
   ~marker_topic  – 网格 marker 输出话题（默认 /dynamic_target/marker）
-  ~mesh_resource – 网格资源（默认 package://sub_planning/meshes/AUV.STL）
+  ~mesh_resource – 网格资源（默认 package://vuram_description/meshes/AUV.STL）
   ~mesh_scale    – 网格缩放（默认 1.0，与仿真一致）
   ~mesh_color    – RGBA 颜色（默认 [1.0, 0.84, 0.0, 0.92]，与仿真一致）
 """
@@ -26,7 +26,7 @@ from visualization_msgs.msg import Marker
 class TargetMarkerRepublisher(object):
     def __init__(self):
         self.mesh_resource = rospy.get_param(
-            '~mesh_resource', 'package://sub_planning/meshes/AUV.STL')
+            '~mesh_resource', 'package://vuram_description/meshes/AUV.STL')
         self.mesh_scale = float(rospy.get_param('~mesh_scale', 1.0))
         self.mesh_color = rospy.get_param(
             '~mesh_color', [1.0, 0.84, 0.0, 0.92])

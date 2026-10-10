@@ -14,12 +14,12 @@
 ```text
 ardupilot_ws/
 ├── install_sub_planning_deps.sh
-└── src/sub_planning/
-    ├── config/
-    ├── launch/
-    ├── scripts/
-    ├── package.xml
-    └── requirements.txt
+└── src/
+    ├── sub_planning/        # estimation, planning, simulation & experiment orchestration
+    ├── vuram_control/       # low-level AUV control (MAVROS/ArduSub interface)
+    ├── fls_detector/        # forward-looking sonar processing & detection
+    ├── vuram_description/   # AUV meshes and URDF models
+    └── sonar_driver/        # real FLS hardware driver
 ```
 
 ## Environment
@@ -113,7 +113,7 @@ source devel/setup.bash
 ### 1. Vehicle control stack
 
 ```bash
-roslaunch sub_planning common_vehicle_control.launch
+roslaunch vuram_control common_vehicle_control.launch
 ```
 
 This includes the MAVROS bridge launch from `apm.launch`, the boundary loader, control nodes, and RViz support.
@@ -127,13 +127,13 @@ roslaunch sub_planning mpc_2d.launch
 ### 3. Forward sonar simulation
 
 ```bash
-roslaunch sub_planning forward_sonar_sim.launch
+roslaunch fls_detector forward_sonar_sim.launch
 ```
 
 To show the sonar image window:
 
 ```bash
-roslaunch sub_planning forward_sonar_sim.launch show_window:=true
+roslaunch fls_detector forward_sonar_sim.launch show_window:=true
 ```
 
 ## Notes
@@ -147,4 +147,4 @@ roslaunch sub_planning forward_sonar_sim.launch show_window:=true
 - If `rosdep` fails, initialize it first on the target machine and retry.
 - If `catkin_make` is not found, install ROS catkin build tools for your distribution.
 - If OpenCV windows do not appear, check that the target machine has a desktop environment and OpenCV GUI support.
-- If MAVROS cannot connect, update the FCU URL in [src/sub_planning/launch/apm.launch](/home/lhy/ardupilot_ws/src/sub_planning/launch/apm.launch:1) to match your simulator or hardware.
+- If MAVROS cannot connect, update the FCU URL in [src/vuram_control/launch/apm.launch](/home/lhy/ardupilot_ws/src/vuram_control/launch/apm.launch:1) to match your simulator or hardware.

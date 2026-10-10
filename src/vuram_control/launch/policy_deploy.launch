@@ -1,0 +1,103 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ====================================================================
+   policy_deploy.launch
+   MuJoCo 训练策略在 ArduSub 栈上的部署入口：apm（MAVROS）+ 逐推进器直控
+   （set_6dof_cmd，固件 CUSTOM 1:1 帧 + RC override，保留 arm 门控）
+   + 20 Hz 策略闭环 + 可选 RViz 轨迹叠加显示。
+
+   链路：/mavros/local_position/odom → obs[22] → policy.pt → a[6] →
+        PWM(1100~1900) → /dof_cmd → set_6dof_cmd（RC override）→
+        CH1~6 1:1 → MOTOR1~6（CUSTOM 帧直通混控）
+   通道映射（thruster_interface.py）：SITL 物理表与实车接线均为孪生
+        T0..T5 顺序，恒等映射 a[i]→CH(i+1)（tam_mix 默认关闭）；接线
+        不一致时用 ~servo_map/~servo_sign 标定。
+
+   注意：
+   - CUSTOM 帧保留完整 arm 门控与 failsafe：未解锁无输出；节点死掉后
+     override 过期（RC_OVERRIDE_TIME=3s）+ FS_PILOT_INPUT=2 自动 disarm。
+   - setup_fc 首次运行需为 true：设置 SYSID_MYGCS=1、SERVO1~6_FUNCTION
+     =33~38、FRAME_CONFIG=7、ACRO_YAW_P=4.5（yaw 1:1）。FRAME_CONFIG 首次
+     从其他构型切到 7 后需重启飞控才生效（之后持久化，可设 false）。
+   - 与 AUV_ctrl_thruster.launch（DO_SET_SERVO 直控）互斥：切换时由两个
+     脚本各自的参数配置恢复所需状态。
+   - 参考轨迹深度带默认 -5..0（SITL 水面）；按实际运行深度覆盖
+     ref_z_min/ref_z_max。
+   ==================================================================== -->
+
+  <!-- ==================== 飞控连接参数 ==================== -->
+  <arg name="fcu_url" default="udp://127.0.0.1:14551@14555"/>
+
+  <!-- ==================== 推进器直控参数（CUSTOM 1:1 帧） ==================== -->
+  <!-- setup_fc: 启动时自动配置飞控参数（SYSID_MYGCS/SERVOx_FUNCTION/
+       FRAME_CONFIG=7/ACRO_YAW_P）。 -->
+  <arg name="setup_fc" default="false"/>
+  <!-- arm_vehicle: 启动后自动解锁（默认关闭，建议手动解锁确认链路后再按需开启） -->
+  <arg name="arm_vehicle" default="false"/>
+
+  <!-- ==================== 策略与参考轨迹参数 ==================== -->
+  <arg name="model_dir" default="$(find vuram_control)/models/policy_v75"/>
+  <arg name="spec" default="$(find vuram_control)/config/obs_act.yaml"/>
+  <!-- ref_family: '' = 随机；line | lissajous | waypoints_dp -->
+  <arg name="ref_family" default=""/>
+  <!-- ref_seed: -1 = 每次运行随机新轨迹；固定值可复现同一轨迹 -->
+  <arg name="ref_seed" default="-1"/>
+  <arg name="episode_len_s" default="60.0"/>
+  <!-- wait_ready: 等待推进器桥接节点完成飞控参数配置并发布就绪信号后再开始
+       生成参考轨迹与下发控制（SITL 首次参数表下载可达数十秒）。 -->
+  <arg name="wait_ready" default="true"/>
+  <arg name="ready_topic" default="/dof_cmd/ready"/>
+  <!-- 参考轨迹深度带（世界 ENU，m），默认 MuJoCo 训练深度带 -->
+  <arg name="ref_z_min" default="-5"/>
+  <arg name="ref_z_max" default="-0"/>
+
+  <!-- ==================== 话题与显示开关 ==================== -->
+  <arg name="odom_topic" default="/mavros/local_position/odom"/>
+  <arg name="dof_cmd_topic" default="/dof_cmd"/>
+  <!-- tam_mix: SITL 物理表已改为孪生几何（MOTOR1..6 = 孪生 T0..T5，与实车
+       MAIN OUT 1~6 接线一致）→ 默认 false 恒等映射；仅在旧版原版镜像几何
+       SITL 上才需要 true（TAM 伪逆混合补偿）。接线不一致用
+       ~servo_map/~servo_sign 标定。 -->
+  <arg name="tam_mix" default="false"/>
+  <arg name="enable_viz" default="true"/>
+  <arg name="enable_rviz" default="true"/>
+
+  <!-- ==================== 基础飞控链路 ==================== -->
+  <include file="$(find vuram_control)/launch/apm.launch">
+    <arg name="fcu_url" value="$(arg fcu_url)"/>
+  </include>
+
+  <!-- ==================== 推进器直控节点（CUSTOM 1:1 帧 + RC override） ==================== -->
+  <node name="set_6dof_cmd" pkg="vuram_control" type="set_6dof_cmd.py" output="screen">
+    <param name="setup_fc_params" type="bool" value="$(arg setup_fc)"/>
+    <param name="frame_config" type="int" value="7"/>
+    <param name="acro_yaw_p" type="double" value="4.5"/>
+    <param name="arm_vehicle" type="bool" value="$(arg arm_vehicle)"/>
+    <param name="ready_topic" value="$(arg ready_topic)"/>
+  </node>
+
+  <!-- ==================== 策略推理节点 ==================== -->
+  <node name="policy_inference" pkg="vuram_control" type="policy_inference_node.py"
+        output="screen" required="true"
+        args="--model_dir $(arg model_dir)
+              --spec $(arg spec)
+              --ref_family=$(arg ref_family)
+              --episode_len_s $(arg episode_len_s)">
+    <param name="ref_seed" value="$(arg ref_seed)"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="cmd_topic" value="$(arg dof_cmd_topic)"/>
+    <param name="ref_z_min" value="$(arg ref_z_min)"/>
+    <param name="ref_z_max" value="$(arg ref_z_max)"/>
+    <param name="viz" value="$(arg enable_viz)"/>
+    <param name="wait_ready" value="$(arg wait_ready)"/>
+    <param name="ready_topic" value="$(arg ready_topic)"/>
+    <param name="tam_mix" value="$(arg tam_mix)"/>
+  </node>
+
+  <!-- ==================== RViz 可视化 ==================== -->
+  <!-- 使用专用配置（config/policy_traj_view.rviz）：机器人模型 + 策略参考/
+       实际轨迹叠加显示，不动默认的 ardusub_display.rviz。 -->
+  <include if="$(arg enable_rviz)" file="$(find vuram_control)/launch/rviz.launch">
+    <arg name="display_config" value="$(find vuram_control)/config/policy_traj_view.rviz"/>
+  </include>
+</launch>

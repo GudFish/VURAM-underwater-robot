@@ -2,7 +2,7 @@
 <launch>
   <!-- ==================== 基础控制链路 ==================== -->
   <!-- 启动飞控桥接、速度控制和定深速度复用链路。 -->
-  <include file="$(find sub_planning)/launch/common_vehicle_control.launch">
+  <include file="$(find vuram_control)/launch/common_vehicle_control.launch">
     <arg name="pos_ctrl" value="False"/>
     <arg name="vel_ctrl_rate" value="20.0"/>
     <arg name="depth_mux" value="True"/>
