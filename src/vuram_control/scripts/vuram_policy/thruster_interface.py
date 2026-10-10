@@ -45,7 +45,7 @@ PWM_SPAN = (PWM_MAX - PWM_MIN) / 2.0   # 400 us full-scale excursion
 # 恒等映射：a[i] -> servo(i+1)，全部同向（SITL 物理表已改为孪生几何：
 # 正 PWM 与训练正方向一致，垂直推进器正 PWM = 向上）
 IDENTITY_SERVO = (1, 2, 3, 4, 5, 6)
-IDENTITY_SIGN = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+IDENTITY_SIGN = (-1.0, -1.0, -1.0, -1.0, -1.0, -1.0)
 
 # 原版 ArduSub VECTORED 表下的最小范数混合映射（行=servo1..6, 列=a0..a5）
 # M = pinv(TAM_sitl) @ TAM_twin（SITL 列已做 NED->ENU 转换：y/z 取反）；

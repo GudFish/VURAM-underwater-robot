@@ -1,5 +1,8 @@
 <?xml version="1.0"?>
 <launch>
+  <!-- 该launch启动的是直接控制独立的6个推进器，但不受arm/disarm控制，有安全风险，
+       且需要修改飞控参数SERVOx_FUNCTION=0 -->
+
   <!-- ==================== 启动开关参数 ==================== -->
   <!-- show_rviz: 是否启动 RViz 可视化（批量实验设为 false 以节省内存/GPU） -->
   <arg name="show_rviz" default="true"/>
@@ -11,6 +14,14 @@
        之后可设为 false 跳过。注意：此设置与 AUV_ctrl_6dof.launch（RC override）
        互斥，切换模式时两个脚本各自会自动把参数改回所需值。 -->
   <arg name="setup_fc" default="false"/>
+
+  <!-- ==================== DVL 定位参数 ==================== -->
+  <!-- use_dvl: 启动 DVL 驱动节点并发布 /dvl/odom 等话题（默认 false）。
+       odom_source: 定位/TF 来源 — mavros（默认）| dvl（DVL 定位接管 TF 树）。
+       dvl_ip: DVL A50 静态 IP。 -->
+  <arg name="use_dvl" default="false"/>
+  <arg name="odom_source" default="mavros"/>
+  <arg name="dvl_ip" default="192.168.1.95"/>
 
   <!-- ==================== 基础飞控链路 ==================== -->
   <!-- 启动 MAVROS 与飞控通信链路。 -->
@@ -39,6 +50,22 @@
     <param name="sim_marker_alpha" value="0.95"/>
   </node>
 
+  <!-- ==================== DVL 里程计节点（可选） ==================== -->
+  <!-- use_dvl: 启动 DVL 驱动，发布 /dvl/odom（20 Hz）、/dvl/velocity、
+       /dvl/altitude 等话题（默认 false，不影响原有链路）。
+       odom_source: 定位/TF 来源 — mavros（默认：map→base_link 由飞控 EKF
+       经 tf_baselink_map_node 提供）| dvl（odom→base_link 由 DVL 广播，
+       mavros TF 关闭，RViz 切换为 odom 固定帧；隐含启动 DVL 节点）。
+       首次连上 DVL 后自动 reset_dead_reckoning 一次，从原点重新建立坐标系。 -->
+  <node if="$(eval arg('use_dvl') or arg('odom_source') == 'dvl')"
+        name="dvl_odometry_node" pkg="dvl_odometry" type="dvl_odometry_node.py" output="screen">
+    <param name="ip" value="$(arg dvl_ip)"/>
+    <param name="port" value="16171"/>
+    <param name="reset_on_start" value="true"/>
+    <param name="odom_rate" value="20.0"/>
+    <param name="publish_tf" value="$(eval arg('odom_source') == 'dvl')"/>
+  </node>
+
   <!-- ==================== 预留节点 ==================== -->
   <!-- 这里保留了动态目标与旧版跟踪节点的启动位置，当前默认不启用。 -->
   <!-- <node name="dynamic_target_generator" pkg="sub_planning" type="dynamic_target_generator.py" output="screen"/>
@@ -56,5 +83,9 @@
 
   <!-- ==================== 可视化 ==================== -->
   <!-- 启动 RViz、模型发布和 TF 广播链路（批量实验可关闭）。 -->
-  <include if="$(arg show_rviz)" file="$(find vuram_control)/launch/rviz.launch"/>
+  <include if="$(arg show_rviz)" file="$(find vuram_control)/launch/rviz.launch">
+    <arg name="publish_map_tf" value="$(eval arg('odom_source') == 'mavros')"/>
+    <arg name="display_config"
+         value="$(eval find('vuram_control') + ('/config/policy_eval_dvl.rviz' if arg('odom_source') == 'dvl' else '/config/policy_eval_ardusub.rviz'))"/>
+  </include>
 </launch>

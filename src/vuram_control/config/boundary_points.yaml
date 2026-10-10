@@ -24,3 +24,7 @@ gps_points:
 #   - [31.288771, 121.222558]
 #   - [31.289029, 121.222384]
 #   - [31.289074, 121.221697]
+
+
+# simluate custom frame 
+# sim_vehicle.py -v ArduSub -f custom -l 31.284730,121.211700,0,0 --console

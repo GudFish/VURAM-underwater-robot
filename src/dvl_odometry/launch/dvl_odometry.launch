@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ====================================================================
+   dvl_odometry.launch
+   Water Linked DVL A50 驱动与定位导航节点。
+
+   用法示例：
+     roslaunch dvl_odometry dvl_odometry.launch                      # 真机（IP 192.168.1.95）
+     roslaunch dvl_odometry dvl_odometry.launch ip:=127.0.0.1 publish_tf:=true
+                                                                     # 联调模拟器（另开 dvl_simulator.launch）
+     roslaunch dvl_odometry dvl_odometry.launch publish_tf:=true     # 需要 odom→base_link TF 时
+
+   说明：
+     - 默认不广播 TF（publish_tf=false），仅发布 /dvl/odom 消息，避免与 mavros
+       的 map→base_link 冲突；需要 DVL 定位接管 TF 树时置 publish_tf:=true
+       并停用 tf_baselink_map_node（三条 AUV_ctrl launcher 已内置该切换：
+       use_dvl:=true odom_source:=dvl）。
+     - reset_on_start=true：首次连上 DVL 后自动 reset_dead_reckoning 一次
+       （每次节点运行仅一次，重连不重发）。
+     - 完整参数表见 README.md。
+  ==================================================================== -->
+
+  <!-- ==================== 连接参数 ==================== -->
+  <arg name="ip" default="192.168.1.95"/>
+  <arg name="port" default="16171"/>
+  <arg name="reconnect_min_delay" default="1.0"/>
+  <arg name="reconnect_max_delay" default="30.0"/>
+
+  <!-- ==================== 行为参数 ==================== -->
+  <arg name="reset_on_start" default="true"/>
+  <!-- apply_config: 连接时向 DVL 下发 set_config（speed_of_sound 非零或
+       mounting_rotation_offset 非零时生效）。注意：若已在 DVL 上配置过安装
+       偏置，速度输出已转至车体系，勿重复下发。 -->
+  <arg name="apply_config" default="false"/>
+  <arg name="speed_of_sound" default="0.0"/>
+  <arg name="mounting_rotation_offset" default="0.0"/>
+
+  <!-- ==================== 输出参数 ==================== -->
+  <arg name="odom_rate" default="20.0"/>
+  <arg name="publish_tf" default="false"/>
+  <arg name="publish_z" default="true"/>
+  <arg name="odom_frame" default="odom"/>
+  <arg name="robot_frame" default="base_link"/>
+  <arg name="dvl_frame" default="dvl_link"/>
+
+  <node name="dvl_odometry_node" pkg="dvl_odometry" type="dvl_odometry_node.py" output="screen">
+    <!-- 连接 -->
+    <param name="ip" value="$(arg ip)"/>
+    <param name="port" value="$(arg port)"/>
+    <param name="reconnect_min_delay" value="$(arg reconnect_min_delay)"/>
+    <param name="reconnect_max_delay" value="$(arg reconnect_max_delay)"/>
+    <!-- 行为 -->
+    <param name="reset_on_start" value="$(arg reset_on_start)"/>
+    <param name="apply_config" value="$(arg apply_config)"/>
+    <param name="speed_of_sound" value="$(arg speed_of_sound)"/>
+    <param name="mounting_rotation_offset" value="$(arg mounting_rotation_offset)"/>
+    <!-- 输出 -->
+    <param name="odom_rate" value="$(arg odom_rate)"/>
+    <param name="publish_tf" value="$(arg publish_tf)"/>
+    <param name="publish_z" value="$(arg publish_z)"/>
+    <param name="odom_frame" value="$(arg odom_frame)"/>
+    <param name="robot_frame" value="$(arg robot_frame)"/>
+    <param name="dvl_frame" value="$(arg dvl_frame)"/>
+  </node>
+</launch>

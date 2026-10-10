@@ -10,6 +10,7 @@ import os
 
 import numpy as np
 import rospy
+from mavros_msgs.srv import ParamPull
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool
 
@@ -102,10 +103,11 @@ class PoseState(object):
 
 def run_policy_node(model_dir, spec_path, ref_family='',
                     episode_len_s=60.0):
-    """Deployment loop: waits for the thruster bridge ready signal, then runs
-    odom state + sampled reference -> obs[22] -> a[6] -> thruster PWM on
-    /thruster_cmd at the control rate. Reference (green) and actual (orange)
-    trajectories are published for RViz."""
+    """Deployment loop: waits for the thruster bridge ready signal and the
+    MAVROS parameter-list download, then runs odom state + sampled reference
+    -> obs[22] -> a[6] -> thruster PWM on /dof_cmd at the control rate.
+    Reference (green) and actual (orange) trajectories are published for
+    RViz."""
     spec = load_spec(spec_path)
     odom_topic = rospy.get_param('~odom_topic', '/mavros/local_position/odom')
     # ref_seed < 0: a fresh random trajectory on every run
@@ -122,11 +124,11 @@ def run_policy_node(model_dir, spec_path, ref_family='',
         rospy.logfatal('no policy.pt in %s', model_dir)
         return
 
-    # 等待推进器桥接节点（set_thruster_cmd）完成飞控参数配置并发布 latch 就绪
+    # 等待推进器桥接节点（set_6dof_cmd）完成飞控参数配置并发布 latch 就绪
     # 信号后再开始生成参考轨迹与下发控制；SITL 首次参数表下载可达数十秒。
     # 独立运行本节点（无桥接）时置 ~wait_ready=false。
     wait_ready = rospy.get_param('~wait_ready', True)
-    ready_topic = rospy.get_param('~ready_topic', '/thruster_cmd/ready')
+    ready_topic = rospy.get_param('~ready_topic', '/dof_cmd/ready')
     if wait_ready:
         ready = {'flag': False}
         rospy.Subscriber(ready_topic, Bool,
@@ -140,6 +142,28 @@ def run_policy_node(model_dir, spec_path, ref_family='',
                           '(%s); exiting', ready_topic)
             return
         rospy.loginfo('thruster bridge ready (%s)', ready_topic)
+
+    # 等待 MAVROS 参数表下载完成（PR: parameters list received）后再开始生成
+    # 参考轨迹：实测参数下载期间的参数洪流会挤占 RC override 转发链路，
+    # 造成 ~30 s 的控制中断/乱飘。/mavros/param/pull 服务会阻塞至参数表
+    # 下载完成（已下载时立即返回）。独立运行本节点时置 ~wait_param_list=false。
+    wait_param_list = rospy.get_param('~wait_param_list', True)
+    param_pull_service = rospy.get_param('~param_pull_service',
+                                         '/mavros/param/pull')
+    if wait_param_list:
+        try:
+            rospy.wait_for_service(param_pull_service, timeout=30.0)
+            pull = rospy.ServiceProxy(param_pull_service, ParamPull,
+                                      persistent=True)
+            resp = pull(force_pull=False)
+            if resp.success:
+                rospy.loginfo('MAVROS parameter list received (%d params)',
+                              resp.param_received)
+            else:
+                rospy.logwarn('MAVROS param pull failed; continuing without '
+                              'parameter-list confirmation')
+        except (rospy.ServiceException, rospy.ROSException) as e:
+            rospy.logwarn('MAVROS param pull unavailable (%s); continuing', e)
 
     thrusters = ThrusterInterface(
         rospy.get_param('~cmd_topic', '/thruster_cmd'))

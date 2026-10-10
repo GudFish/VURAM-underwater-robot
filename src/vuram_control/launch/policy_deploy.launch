@@ -14,6 +14,8 @@
         不一致时用 ~servo_map/~servo_sign 标定。
 
    注意：
+   - 启动门控顺序：推进器桥接就绪（/dof_cmd/ready）→ MAVROS 参数表下载
+     完成（/mavros/param/pull）→ 生成参考轨迹 → 20 Hz 闭环下发控制。
    - CUSTOM 帧保留完整 arm 门控与 failsafe：未解锁无输出；节点死掉后
      override 过期（RC_OVERRIDE_TIME=3s）+ FS_PILOT_INPUT=2 自动 disarm。
    - setup_fc 首次运行需为 true：设置 SYSID_MYGCS=1、SERVO1~6_FUNCTION
@@ -47,6 +49,11 @@
        生成参考轨迹与下发控制（SITL 首次参数表下载可达数十秒）。 -->
   <arg name="wait_ready" default="true"/>
   <arg name="ready_topic" default="/dof_cmd/ready"/>
+  <!-- wait_param_list: 等待 MAVROS 参数表下载完成（PR: parameters list
+       received）后再开始生成轨迹。参数下载期间的参数洪流会挤占 RC override
+       转发链路造成控制中断（实测 ~30 s 乱飘），下载完成后控制链路才稳定。 -->
+  <arg name="wait_param_list" default="true"/>
+  <arg name="param_pull_service" default="/mavros/param/pull"/>
   <!-- 参考轨迹深度带（世界 ENU，m），默认 MuJoCo 训练深度带 -->
   <arg name="ref_z_min" default="-5"/>
   <arg name="ref_z_max" default="-0"/>
@@ -91,13 +98,15 @@
     <param name="viz" value="$(arg enable_viz)"/>
     <param name="wait_ready" value="$(arg wait_ready)"/>
     <param name="ready_topic" value="$(arg ready_topic)"/>
+    <param name="wait_param_list" value="$(arg wait_param_list)"/>
+    <param name="param_pull_service" value="$(arg param_pull_service)"/>
     <param name="tam_mix" value="$(arg tam_mix)"/>
   </node>
 
   <!-- ==================== RViz 可视化 ==================== -->
-  <!-- 使用专用配置（config/policy_traj_view.rviz）：机器人模型 + 策略参考/
-       实际轨迹叠加显示，不动默认的 ardusub_display.rviz。 -->
+  <!-- 使用专用配置（config/policy_eval_ardusub.rviz，mavros 定位源/固定帧 map）：
+       机器人模型 + 策略参考/实际轨迹叠加显示，不动默认的 ardusub_display.rviz。 -->
   <include if="$(arg enable_rviz)" file="$(find vuram_control)/launch/rviz.launch">
-    <arg name="display_config" value="$(find vuram_control)/config/policy_traj_view.rviz"/>
+    <arg name="display_config" value="$(find vuram_control)/config/policy_eval_ardusub.rviz"/>
   </include>
 </launch>

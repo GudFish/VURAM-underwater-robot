@@ -31,10 +31,11 @@ class TFBroadcasterNode:
         # self.correction_quat = tf_trans.quaternion_from_euler(3.14159, 0.0, 0.0)   # (pi, 0, 0)
         # 修正2：绕 Y 轴旋转 180°（如果前后颠倒且上下颠倒）
         # self.correction_quat = tf_trans.quaternion_from_euler(0.0, 3.14159, 0.0)
-        # 修正3：绕 Z 轴旋转 180°（仅水平调头，不解决上下颠倒，一般不用）
-        self.correction_quat = tf_trans.quaternion_from_euler(0.0, 0.0, 3.14159/2)
-        # 修正4：无修正（保持原始朝向）
-        # self.correction_quat = [0.0, 0.0, 0.0, 1.0]
+        # 修正3：绕 Z 轴旋转 90°（旧 mesh 的朝向补偿；新 mesh 已按正确
+        #         朝向建模，不再需要，如换回旧 mesh 再恢复此行）
+        # self.correction_quat = tf_trans.quaternion_from_euler(0.0, 0.0, 3.14159/2)
+        # 修正4：无修正（保持原始朝向，当前使用）
+        self.correction_quat = [0.0, 0.0, 0.0, 1.0]
         
         # 仅订阅 Odometry（同时覆盖在线运行与 bag 回放）：pose 与 odom 两个
         # 话题携带同一位姿，若同时订阅会双路广播 map->base_link，两路消息
