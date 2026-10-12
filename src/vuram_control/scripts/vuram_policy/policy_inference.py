@@ -28,6 +28,15 @@ class PolicyInference(object):
         import torch
         self.torch = torch
         torch.set_num_threads(2)   # don't starve the SITL/MAVROS stack
+        # ~device: 'cpu'（默认）| 'cuda'。实测小模型 GPU 反而更慢
+        # （kernel 启动 + 回传同步开销），故默认 CPU；显式指定 cuda
+        # 且 CUDA 不可用时回退 CPU 并告警。
+        device_arg = rospy.get_param('~device', 'cpu')
+        if device_arg.startswith('cuda') and not torch.cuda.is_available():
+            rospy.logwarn('device=%s requested but CUDA unavailable; '
+                          'falling back to cpu', device_arg)
+            device_arg = 'cpu'
+        self.device = torch.device(device_arg)
         self.model_dir = model_dir
         self.model = None
         self.version = None
@@ -43,21 +52,22 @@ class PolicyInference(object):
             rospy.logerr('no policy.pt in %s', self.model_dir)
             return
         self.model = self.torch.jit.load(pt_path)
+        self.model.to(self.device)
         self.model.eval()
         spec_json = os.path.join(self.model_dir, 'spec.json')
         if os.path.exists(spec_json):
             with open(spec_json) as f:
                 self.version = json.load(f).get('policy_version')
-        rospy.loginfo('loaded policy version %s from %s',
-                      self.version, self.model_dir)
+        rospy.loginfo('loaded policy version %s from %s (device: %s)',
+                      self.version, self.model_dir, self.device)
 
     def step(self, obs):
         """obs[22] -> a[6] (stochastic deployment path)."""
         t = self.torch
         with t.no_grad():
-            o = t.from_numpy(np.asarray(obs, dtype=np.float32))[None]
+            o = t.from_numpy(np.asarray(obs, dtype=np.float32))[None].to(self.device)
             a = self.model(o)
-        return a.numpy()[0].astype(np.float64)
+        return a.cpu().numpy()[0].astype(np.float64)
 
 
 class PoseState(object):

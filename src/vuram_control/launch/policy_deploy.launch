@@ -45,6 +45,10 @@
   <!-- ref_seed: -1 = 每次运行随机新轨迹；固定值可复现同一轨迹 -->
   <arg name="ref_seed" default="-1"/>
   <arg name="episode_len_s" default="60.0"/>
+  <!-- device: 策略推理设备 — cpu（默认）| cuda。
+       实测 22→6 小 MLP 单步 GPU 反而更慢（1.97 vs 0.29 ms，kernel 启动+
+       回传同步开销），故默认 cpu；cuda 不可用时脚本自动回退 cpu 并告警。 -->
+  <arg name="device" default="cpu"/>
   <!-- wait_ready: 等待推进器桥接节点完成飞控参数配置并发布就绪信号后再开始
        生成参考轨迹与下发控制（SITL 首次参数表下载可达数十秒）。 -->
   <arg name="wait_ready" default="true"/>
@@ -91,6 +95,7 @@
               --ref_family=$(arg ref_family)
               --episode_len_s $(arg episode_len_s)">
     <param name="ref_seed" value="$(arg ref_seed)"/>
+    <param name="device" value="$(arg device)"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
     <param name="cmd_topic" value="$(arg dof_cmd_topic)"/>
     <param name="ref_z_min" value="$(arg ref_z_min)"/>
