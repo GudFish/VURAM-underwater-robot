@@ -1,0 +1,119 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ====================================================================
+   policy_goal_deploy.launch
+   RViz 手动目标点 + 训练策略跟踪的部署入口：apm（MAVROS）+ 逐推进器直控
+   （set_6dof_cmd，固件 CUSTOM 1:1 帧 + RC override，保留 arm 门控）+
+   目标点轨迹规划器（goal_planner，Hermite 平滑曲线，20 Hz 发布参考）+
+   策略闭环（ref_source:=external，跟踪规划器参考）+ RViz。
+
+   链路：odom → goal_planner（/move_base_simple/goal → 参考 Odometry）
+        → policy.pt → a[6] → /dof_cmd → set_6dof_cmd → MOTOR1~6
+   目标语义：RViz "2D Nav Goal" 点选；z 保持规划时刻当前深度；到达终点
+        后无限期保持；运动中新目标从当前位姿+速度无缝重规划。
+
+   启动门控：推进器桥接就绪（/dof_cmd/ready）→ MAVROS 参数表下载完成
+        （/mavros/param/pull）→ 开始 20 Hz 闭环。
+   定位源：odom_source:=mavros（默认，EKF 定位，固定帧 map）或 :=dvl
+        （DVL 定位 /dvl/odom，固定帧 odom），同 AUV_ctrl_custom.launch。
+   ==================================================================== -->
+
+  <!-- ==================== 飞控连接参数 ==================== -->
+  <arg name="fcu_url" default="udp://127.0.0.1:14551@14555"/>
+
+  <!-- ==================== 推进器直控参数（CUSTOM 1:1 帧） ==================== -->
+  <arg name="setup_fc" default="false"/>
+  <arg name="arm_vehicle" default="false"/>
+
+  <!-- ==================== 策略参数 ==================== -->
+  <arg name="model_dir" default="$(find vuram_control)/models/policy_v75"/>
+  <arg name="spec" default="$(find vuram_control)/config/obs_act.yaml"/>
+  <arg name="device" default="cpu"/>
+  <arg name="wait_ready" default="true"/>
+  <arg name="ready_topic" default="/dof_cmd/ready"/>
+  <arg name="wait_param_list" default="true"/>
+  <arg name="param_pull_service" default="/mavros/param/pull"/>
+  <arg name="dof_cmd_topic" default="/dof_cmd"/>
+  <arg name="tam_mix" default="false"/>
+
+  <!-- ==================== 定位源切换（同 AUV_ctrl_custom.launch） ==================== -->
+  <arg name="use_dvl" default="false"/>
+  <arg name="odom_source" default="mavros"/>  <!-- mavros | dvl -->
+  <arg name="dvl_ip" default="192.168.1.95"/>
+  <arg name="odom_topic" default="$(eval '/dvl/odom' if arg('odom_source') == 'dvl' else '/mavros/local_position/odom')"/>
+  <arg name="viz_frame_id" default="$(eval 'odom' if arg('odom_source') == 'dvl' else 'map')"/>
+
+  <!-- ==================== 规划器参数 ==================== -->
+  <arg name="goal_topic" default="/move_base_simple/goal"/>
+  <arg name="ref_topic" default="/planning/reference_odom"/>
+  <arg name="viz_topic" default="/planning/path_array"/>
+  <arg name="desired_speed" default="0.3"/>
+  <arg name="publish_rate" default="20"/>
+
+  <!-- ==================== 显示开关 ==================== -->
+  <arg name="enable_viz" default="true"/>
+  <arg name="enable_rviz" default="true"/>
+
+  <!-- ==================== 基础飞控链路 ==================== -->
+  <include file="$(find vuram_control)/launch/apm.launch">
+    <arg name="fcu_url" value="$(arg fcu_url)"/>
+  </include>
+
+  <!-- ==================== 推进器直控节点（CUSTOM 1:1 帧 + RC override） ==================== -->
+  <node name="set_6dof_cmd" pkg="vuram_control" type="set_6dof_cmd.py" output="screen">
+    <param name="setup_fc_params" type="bool" value="$(arg setup_fc)"/>
+    <param name="frame_config" type="int" value="7"/>
+    <param name="acro_yaw_p" type="double" value="4.5"/>
+    <param name="arm_vehicle" type="bool" value="$(arg arm_vehicle)"/>
+    <param name="ready_topic" value="$(arg ready_topic)"/>
+  </node>
+
+  <!-- ==================== DVL 定位（可选） ==================== -->
+  <node if="$(eval arg('use_dvl') or arg('odom_source') == 'dvl')"
+        name="dvl_odometry_node" pkg="dvl_odometry" type="dvl_odometry_node.py" output="screen">
+    <param name="ip" value="$(arg dvl_ip)"/>
+    <param name="port" value="16171"/>
+    <param name="reset_on_start" value="true"/>
+    <param name="odom_rate" value="20.0"/>
+    <param name="publish_tf" value="$(eval arg('odom_source') == 'dvl')"/>
+  </node>
+
+  <!-- ==================== 目标点轨迹规划器 ==================== -->
+  <node name="goal_planner" pkg="vuram_planning" type="goal_planner_node.py" output="screen">
+    <param name="goal_topic" value="$(arg goal_topic)"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="ref_topic" value="$(arg ref_topic)"/>
+    <param name="desired_speed" value="$(arg desired_speed)"/>
+    <param name="publish_rate" value="$(arg publish_rate)"/>
+    <param name="viz_topic" value="$(arg viz_topic)"/>
+    <param name="viz_frame_id" value="$(arg viz_frame_id)"/>
+  </node>
+
+  <!-- ==================== 策略推理节点（外部参考模式） ==================== -->
+  <node name="policy_inference" pkg="vuram_control" type="policy_inference_node.py"
+        output="screen" required="true"
+        args="--model_dir $(arg model_dir)
+              --spec $(arg spec)">
+    <param name="ref_source" value="external"/>
+    <param name="ref_topic" value="$(arg ref_topic)"/>
+    <param name="device" value="$(arg device)"/>
+    <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="cmd_topic" value="$(arg dof_cmd_topic)"/>
+    <param name="viz" value="$(arg enable_viz)"/>
+    <param name="viz_frame_id" value="$(arg viz_frame_id)"/>
+    <param name="wait_ready" value="$(arg wait_ready)"/>
+    <param name="ready_topic" value="$(arg ready_topic)"/>
+    <param name="wait_param_list" value="$(arg wait_param_list)"/>
+    <param name="param_pull_service" value="$(arg param_pull_service)"/>
+    <param name="tam_mix" value="$(arg tam_mix)"/>
+  </node>
+
+  <!-- ==================== RViz 可视化 ==================== -->
+  <!-- 定位源决定配置与 TF：mavros → map 固定帧 + map→base_link TF；
+       dvl → odom 固定帧 + dvl 广播 odom→base_link（关闭 mavros TF）。 -->
+  <include if="$(arg enable_rviz)" file="$(find vuram_control)/launch/rviz.launch">
+    <arg name="publish_map_tf" value="$(eval arg('odom_source') == 'mavros')"/>
+    <arg name="display_config"
+         value="$(eval find('vuram_control') + ('/config/policy_eval_dvl.rviz' if arg('odom_source') == 'dvl' else '/config/policy_eval_ardusub.rviz'))"/>
+  </include>
+</launch>

@@ -111,15 +111,83 @@ class PoseState(object):
                 'time': pm.header.stamp.to_sec()}
 
 
+def _run_external_ref_loop(inference, thrusters, pose, viz, spec, ref_topic):
+    """外部参考模式：订阅参考 Odometry（pos + quat(yaw) + vel + w_z），
+    无限运行至关机。无参考消息时回中并等待（配合 1 s 看门狗语义）。
+    episode_len_s/ref_family/ref_seed 在本模式被忽略。
+    """
+    ref_msg = {'msg': None}
+    rospy.Subscriber(ref_topic, Odometry, lambda m: ref_msg.update(msg=m),
+                     queue_size=5)
+
+    a_prev = np.zeros(spec['a_dim'])
+    pos_errors = []
+    step_i = 0
+    rospy.loginfo('deploying policy version %s (ref_source=external, '
+                  'ref_topic=%s, episode_len_s ignored)',
+                  inference.version, ref_topic)
+
+    rate = rospy.Rate(spec['control_rate'])
+    while not rospy.is_shutdown():
+        snap = pose.step()
+        if snap is None:
+            rate.sleep()
+            continue
+        m = ref_msg['msg']
+        if m is None:
+            rospy.logwarn_throttle(5, 'no reference on %s yet; holding '
+                                   'neutral', ref_topic)
+            thrusters.set_zero()
+            rate.sleep()
+            continue
+        q = m.pose.pose.orientation
+        pos = np.array([m.pose.pose.position.x,
+                        m.pose.pose.position.y,
+                        m.pose.pose.position.z])
+        rpy = quat_to_rpy([q.x, q.y, q.z, q.w])
+        vel = np.array([m.twist.twist.linear.x,
+                        m.twist.twist.linear.y,
+                        m.twist.twist.linear.z])
+        ref10 = np.concatenate([pos, rpy, vel,
+                                [float(m.twist.twist.angular.z)]])
+        obs = build_obs(snap['state'], ref10, a_prev, spec['obs_layout'])
+        a = np.clip(inference.step(obs), -1.0, 1.0)
+        thrusters.set_action_norm(a)
+        a_prev = a
+        pos_errors.append(float(np.linalg.norm(ref10[0:3] -
+                                               snap['state'][9:12])))
+        if step_i % 10 == 0:
+            viz.add_actual_point(snap['state'][9:12])
+        step_i += 1
+        rate.sleep()
+
+    thrusters.set_zero()
+    mean_err = float(np.mean(pos_errors)) if pos_errors else 0.0
+    rospy.loginfo('external ref loop done: steps=%d mean_pos_err=%.3f m',
+                  step_i, mean_err)
+
+
 def run_policy_node(model_dir, spec_path, ref_family='',
                     episode_len_s=60.0):
     """Deployment loop: waits for the thruster bridge ready signal and the
-    MAVROS parameter-list download, then runs odom state + sampled reference
-    -> obs[22] -> a[6] -> thruster PWM on /dof_cmd at the control rate.
+    MAVROS parameter-list download, then runs odom state + reference ->
+    obs[22] -> a[6] -> thruster PWM on /dof_cmd at the control rate.
     Reference (green) and actual (orange) trajectories are published for
-    RViz."""
+    RViz.
+
+    参考来源（~ref_source）：'internal' = 本节点随机生成轨迹（固定时长
+    episode）；'external' = 订阅 ~ref_topic 上由外部节点（如 vuram_planning
+    goal_planner）发布的参考 Odometry，无限运行至关机。
+    """
     spec = load_spec(spec_path)
     odom_topic = rospy.get_param('~odom_topic', '/mavros/local_position/odom')
+    # 参考来源：internal | external（非法值直接退出）
+    ref_source = rospy.get_param('~ref_source', 'internal')
+    ref_topic = rospy.get_param('~ref_topic', '/planning/reference_odom')
+    if ref_source not in ('internal', 'external'):
+        rospy.logfatal('bad ~ref_source %r (expected internal|external)',
+                       ref_source)
+        return
     # ref_seed < 0: a fresh random trajectory on every run
     ref_seed = rospy.get_param('~ref_seed', -1)
     if ref_seed < 0:
@@ -178,10 +246,11 @@ def run_policy_node(model_dir, spec_path, ref_family='',
     thrusters = ThrusterInterface(
         rospy.get_param('~cmd_topic', '/thruster_cmd'))
     pose = PoseState(odom_topic, twist_in_world=spec['twist_in_world'])
-    work_env = {'x': [-8.0, 8.0], 'y': [-8.0, 8.0],
-                'z': [ref_z_min, ref_z_max]}
-    ref_gen = ReferenceGenerator(work_env)
-    rng = np.random.default_rng(ref_seed)
+    if ref_source == 'internal':
+        work_env = {'x': [-8.0, 8.0], 'y': [-8.0, 8.0],
+                    'z': [ref_z_min, ref_z_max]}
+        ref_gen = ReferenceGenerator(work_env)
+        rng = np.random.default_rng(ref_seed)
     viz = TrajVisualizer(rospy.get_param('~viz', False),
                          frame_id=rospy.get_param('~viz_frame_id', 'map'))
 
@@ -191,6 +260,11 @@ def run_policy_node(model_dir, spec_path, ref_family='',
         # shut down before the first odometry message arrived
         rospy.logwarn('no odometry received on %s; exiting', odom_topic)
         thrusters.set_zero()
+        return
+
+    if ref_source == 'external':
+        _run_external_ref_loop(inference, thrusters, pose, viz, spec,
+                               ref_topic)
         return
 
     # anchor the reference trajectory at the vehicle's actual start pose

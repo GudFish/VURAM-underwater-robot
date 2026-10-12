@@ -117,6 +117,14 @@ Visualization Manager:
         {}
       Queue Size: 10
       Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /planning/path_array
+      Name: Planned Path
+      Namespaces:
+        {}
+      Queue Size: 10
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

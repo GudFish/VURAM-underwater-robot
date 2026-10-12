@@ -95,6 +95,9 @@
               --ref_family=$(arg ref_family)
               --episode_len_s $(arg episode_len_s)">
     <param name="ref_seed" value="$(arg ref_seed)"/>
+    <!-- 显式 internal：防止同参数服务器上先前以 external 模式运行过的
+         /policy_inference 私有参数被继承（roscore 跨 launch 复用时会残留） -->
+    <param name="ref_source" value="internal"/>
     <param name="device" value="$(arg device)"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
     <param name="cmd_topic" value="$(arg dof_cmd_topic)"/>
