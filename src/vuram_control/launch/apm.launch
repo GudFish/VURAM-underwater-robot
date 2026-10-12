@@ -5,6 +5,9 @@
   <!-- 仿真使用 SITL UDP；实物实验通过 fcu_url 传入串口等实际连接，如：
        roslaunch ... fcu_url:=/dev/ttyUSB0:115200 -->
   <arg name="fcu_url" default="udp://127.0.0.1:14551@14555"/>
+  <!-- 过滤 mavconn 的 "Remote address" INFO 刷屏（config/rosconsole.config），
+       MAVROS 自身 INFO 与所有 WARN/ERROR 保持可见。 -->
+  <env name="ROSCONSOLE_CONFIG_FILE" value="$(find vuram_control)/config/rosconsole.config"/>
   <include file="$(find mavros)/launch/apm.launch">
     <arg name="fcu_url" value="$(arg fcu_url)" />
   </include>
