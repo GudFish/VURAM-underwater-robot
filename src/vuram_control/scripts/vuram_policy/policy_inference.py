@@ -115,6 +115,10 @@ def _run_external_ref_loop(inference, thrusters, pose, viz, spec, ref_topic):
     """外部参考模式：订阅参考 Odometry（pos + quat(yaw) + vel + w_z），
     无限运行至关机。无参考消息时回中并等待（配合 1 s 看门狗语义）。
     episode_len_s/ref_family/ref_seed 在本模式被忽略。
+
+    注意：训练策略的参考轨迹永远在运动，"静止参考"不在训练分布内——
+    在重新训练出定点保持能力（训练侧加入 hold/hover 参考族）之前，
+    策略对静止参考的表现会漂移。参考本身由规划器锚定保证静止不动。
     """
     ref_msg = {'msg': None}
     rospy.Subscriber(ref_topic, Odometry, lambda m: ref_msg.update(msg=m),
@@ -150,14 +154,14 @@ def _run_external_ref_loop(inference, thrusters, pose, viz, spec, ref_topic):
                         m.twist.twist.linear.z])
         ref10 = np.concatenate([pos, rpy, vel,
                                 [float(m.twist.twist.angular.z)]])
-        obs = build_obs(snap['state'], ref10, a_prev, spec['obs_layout'])
+        s = snap['state']
+        obs = build_obs(s, ref10, a_prev, spec['obs_layout'])
         a = np.clip(inference.step(obs), -1.0, 1.0)
         thrusters.set_action_norm(a)
         a_prev = a
-        pos_errors.append(float(np.linalg.norm(ref10[0:3] -
-                                               snap['state'][9:12])))
+        pos_errors.append(float(np.linalg.norm(ref10[0:3] - s[9:12])))
         if step_i % 10 == 0:
-            viz.add_actual_point(snap['state'][9:12])
+            viz.add_actual_point(s[9:12])
         step_i += 1
         rate.sleep()
 

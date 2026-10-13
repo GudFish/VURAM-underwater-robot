@@ -56,6 +56,9 @@ class GoalPlannerNode(object):
         self._traj = None
         self._traj_t0 = None
         self._viz_ma = MarkerArray()
+        # 未设目标时的保持参考锚点：固定在首个 odom 位姿上（不跟随 odom
+        # 漂移——否则 e_pos 恒为零，策略永远没有回拉力，车辆随波漂走）
+        self._hold_pose = None
 
         # ---- 订阅 / 发布 ----
         self.goal_sub = rospy.Subscriber(self.goal_topic, PoseStamped,
@@ -77,8 +80,14 @@ class GoalPlannerNode(object):
     # ------------------------------------------------------------------
 
     def _odom_cb(self, msg):
-        """缓存最新里程计。"""
+        """缓存最新里程计；首个 odom 同时锁定保持参考锚点。"""
         self._odom_msg = msg
+        if self._hold_pose is None:
+            p = msg.pose.pose.position
+            q = msg.pose.pose.orientation
+            self._hold_pose = (
+                np.array([p.x, p.y, p.z]),
+                np.array([q.x, q.y, q.z, q.w]))
 
     def _goal_cb(self, msg):
         """新目标：从当前位姿+速度无缝重规划（eval(0) = 当前状态）。"""
@@ -132,10 +141,16 @@ class GoalPlannerNode(object):
         msg.header.frame_id = self.viz_frame_id
 
         if self._traj is None:
-            # 尚无目标：保持参考 = 当前位置 + 当前姿态 + 零速度
-            odom = self._odom_msg
-            msg.pose.pose.position = odom.pose.pose.position
-            msg.pose.pose.orientation = odom.pose.pose.orientation
+            # 尚无目标：保持参考 = 锚定位姿（首个 odom 处，固定不动）+ 零速度
+            # （若回显当前 odom，参考会跟着车辆漂移，e_pos 恒零、无回拉力）
+            hp_pos, hp_quat = self._hold_pose
+            msg.pose.pose.position.x = hp_pos[0]
+            msg.pose.pose.position.y = hp_pos[1]
+            msg.pose.pose.position.z = hp_pos[2]
+            msg.pose.pose.orientation.x = hp_quat[0]
+            msg.pose.pose.orientation.y = hp_quat[1]
+            msg.pose.pose.orientation.z = hp_quat[2]
+            msg.pose.pose.orientation.w = hp_quat[3]
             # twist 全零（保持）
         else:
             t = (rospy.Time.now() - self._traj_t0).to_sec()
