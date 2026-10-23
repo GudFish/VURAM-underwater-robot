@@ -43,3 +43,5 @@ dist/
 results/
 # Policy model weights (binary, not tracked)
 /src/vuram_control/scripts/vuram_policy/models/
+
+/src/sonar_driver/sdk_linux_aarch/
