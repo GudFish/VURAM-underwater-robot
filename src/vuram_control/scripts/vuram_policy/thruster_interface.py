@@ -1,37 +1,30 @@
-"""[-1,1]^6 normalized actions -> thruster PWM -> /dof_cmd（CUSTOM 1:1 帧）.
+"""Thruster command interface: 两种动作契约 -> 6 通道 PWM -> /dof_cmd.
 
-ArduSub 逐推进器直控链路（AUV_ctrl_custom / policy_deploy.launch）：
-a in [-1,1] per thruster -> PWM us (1100..1900, 1500 neutral), published as
-a 6-channel Float64MultiArray on /dof_cmd. The set_6dof_cmd node forwards
-each channel as RC_CHANNELS_OVERRIDE; the FCU CUSTOM frame mixer maps
-CH1..6 1:1 to MOTOR1..6（飞控侧 norm_input=(pwm-1500)/400 与 SITL 同口径，
-acro_yaw_p=4.5 消除 yaw 缩放后全通道 1:1，保留 arm 门控与 failsafe）。
+ArduSub 直控链路（VECTORED 帧，AUV_ctrl_6dof / policy_deploy.launch）：
+发布 6 通道 PWM µs (1100..1900, 1500 neutral) 到 /dof_cmd；set_6dof_cmd
+节点转为 RC_CHANNELS_OVERRIDE；飞控 MANUAL 模式按 6DOF 通道语义
+（CH1=pitch、CH2=roll、CH3=throttle、CH4=yaw、CH5=forward、CH6=lateral）
+输入 VECTORED 混控器，由飞控完成推进器分配（norm_input=(pwm-1500)/400，
+acro_yaw_p=4.5 消除 yaw 通道的额外缩放，保留 arm 门控与 failsafe）。
 
-通道几何（重要）：策略输出 a[0..5] 对应 MuJoCo 训练模型的推进器 T0..T5
-（~/mujoco_auv_env/envs/thrusters.py，与 UUV 端 actuators.xacro 一致）。
-ArduSub 原版 VECTORED 几何（SIM_Submarine.cpp）与孪生模型是镜像（45°
-矢量方向互为镜像、垂直推进器正 PWM 方向相反），恒等映射必然导致策略
-"乱飞"。现 SITL 物理表已改为孪生几何（SIM_Submarine.cpp vectored_thrusters，
-MOTOR1..6 = 孪生 T0..T5，与实车 Pixhawk MAIN OUT 1~6 接线一致），
-恒等映射 a[i] -> CH(i+1) 在 SITL 与实车上均与训练一致。
+动作契约（两种，按所用策略版本选择）：
+1. set_action_norm(a[6])：逐推进器归一化指令（v75 及之前的策略口径），
+   经 servo_map/servo_sign/tam_mix 映射为 PWM。
+2. set_wrench_action(a[5])：VND v4 策略口径，a[5] = 归一化机体力/力矩
+   [X,Y,Z,K,N]（无俯仰），**直接映射到 6DOF 通道**（无逐推分配）：
+       CH1(pitch)   = 1500（策略无俯仰轴）
+       CH2(roll)    = 1500 + 400·a[3]   (K，右舷下沉为正，两约定一致)
+       CH3(throttle)= 1500 + 400·a[2]   (Z，向上为正)
+       CH4(yaw)     = 1500 − 400·a[4]   (N，训练正=左转、ArduSub 正=右转，取反)
+       CH5(forward) = 1500 + 400·a[0]   (X)
+       CH6(lateral) = 1500 − 400·a[1]   (Y，训练正=左、ArduSub 正=右，取反)
+   增益说明：策略按 action_scales·a 的物理力/力矩口径训练，而 VECTORED
+   混控器每单位通道输入实现的力/力矩由混控与推进器决定（近似为训练
+   口径的 0.5~1 倍），闭环策略可自适应；如需标定用 ~wrench_gain 统一
+   缩放。yaw 通道要求飞控 ACRO_YAW_P=4.5（set_6dof_cmd 已配）。
 
-映射模式（policy_deploy.launch 通过 ~tam_mix 选择）：
-1. ~tam_mix=false（默认）：恒等映射 a[i] -> CH(i+1)，全部同向（孪生
-   几何下正 PWM 与训练正方向一致，垂直推进器正 PWM = 向上）。接线
-   不一致时用 ~servo_map / ~servo_sign 标定。
-2. ~tam_mix=true（历史兼容）：若 SITL 物理表仍是原版镜像几何，用最小
-   范数混合矩阵 M = pinv(TAM_sitl) @ TAM_twin 把 a 映射为 6 通道指令，
-   在可达子空间上精确复现孪生力/力矩（重建误差 ~1e-15；实测
-   a[0]=1 → 前+左、a[1]=1 → 前+右、a[4]=1 → 向上）。
-
-The policy was trained against the MuJoCo thruster chain
-(thruster_model.py): a -> deadband 0.08 -> T200 polynomial -> omega. The
-same deadband is kept here so tiny commands map to neutral PWM; the
-nonlinear T200 curve is NOT reproduced (ArduSub ESCs map PWM to RPM
-directly, and SITL uses a quadratic out*|out| curve).
-
-安全：CUSTOM 帧保留 arm 门控与 failsafe（未解锁无输出、override 过期
-自动 disarm）；此外本节点看门狗超时回中 1500，set_6dof_cmd 提供
+安全：arm 门控与 failsafe 保留（未解锁无输出、override 过期自动
+disarm）；此外本节点看门狗超时回中 1500，set_6dof_cmd 提供
 ~enable 急停服务。
 """
 import numpy as np
@@ -42,10 +35,15 @@ DEADBAND = 0.08          # MuJoCo thruster_model deadband
 PWM_MIN, PWM_NEUTRAL, PWM_MAX = 1100.0, 1500.0, 1900.0
 PWM_SPAN = (PWM_MAX - PWM_MIN) / 2.0   # 400 us full-scale excursion
 
+# a[0..4] = [X, Y, Z, K, N] -> 1 起始 RC 通道号（6DOF 通道语义）
+WRENCH_DOF_CHANNELS = (5, 6, 3, 2, 4)     # forward, lateral, throttle, roll, yaw
+# 每轴符号：+1 同向；−1 取反（Y：训练正=左 vs ArduSub 正=右；N：左转 vs 右转）
+WRENCH_DOF_SIGNS = (1.0, -1.0, 1.0, 1.0, -1.0)
+
 # 恒等映射：a[i] -> servo(i+1)，全部同向（SITL 物理表已改为孪生几何：
 # 正 PWM 与训练正方向一致，垂直推进器正 PWM = 向上）
 IDENTITY_SERVO = (1, 2, 3, 4, 5, 6)
-IDENTITY_SIGN = (-1.0, -1.0, -1.0, -1.0, -1.0, -1.0)
+IDENTITY_SIGN = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
 
 # 原版 ArduSub VECTORED 表下的最小范数混合映射（行=servo1..6, 列=a0..a5）
 # M = pinv(TAM_sitl) @ TAM_twin（SITL 列已做 NED->ENU 转换：y/z 取反）；
@@ -60,6 +58,21 @@ TAM_MIX = np.array([
     [0.0, 0.0, 0.0, 0.0, -0.008, -0.992],
     [0.0, 0.0, 0.0, 0.0, -0.992, -0.008],
 ])
+
+
+def wrench_to_pwm(a, gain=1.0):
+    """a[5] 归一化力/力矩 [X,Y,Z,K,N] -> 6DOF 通道 PWM µs（VECTORED 帧）。
+
+    直接映射（无逐推分配）：a 的每个轴写到对应的 6DOF 通道，
+    符号按训练口径与 ArduSub 通道语义换算（Y/N 取反），俯仰通道保持
+    中立。gain 为整体标定缩放。
+    """
+    a = np.clip(np.asarray(a, dtype=np.float64), -1.0, 1.0)
+    pwm = np.full(6, PWM_NEUTRAL)
+    for i, (ch, sign) in enumerate(zip(WRENCH_DOF_CHANNELS,
+                                       WRENCH_DOF_SIGNS)):
+        pwm[ch - 1] = PWM_NEUTRAL + PWM_SPAN * gain * sign * a[i]
+    return np.clip(pwm, PWM_MIN, PWM_MAX)
 
 
 def action_to_pwm(a, servo_map=IDENTITY_SERVO, servo_sign=IDENTITY_SIGN,
@@ -97,6 +110,8 @@ class ThrusterInterface(object):
         self.servo_sign = tuple(float(v) for v in rospy.get_param(
             '~servo_sign', IDENTITY_SIGN))
         self.tam_mix = rospy.get_param('~tam_mix', False)
+        # VND v4 力/力矩契约：直接 6DOF 通道映射的整体标定增益
+        self.wrench_gain = float(rospy.get_param('~wrench_gain', 1.0))
         self._watchdog_timeout = watchdog_timeout
         self._last_cmd = np.zeros(n_thrusters)
         self._last_cmd_time = rospy.Time.now()
@@ -116,6 +131,18 @@ class ThrusterInterface(object):
         self._last_cmd = cmd
         self._last_cmd_time = rospy.Time.now()
         self._publish(cmd)
+
+    def set_wrench_action(self, a):
+        """VND v4：a[5] 归一化力/力矩 [X,Y,Z,K,N] -> 6DOF 通道 PWM -> 发布。
+
+        直接映射到 6DOF 通道（X→forward、Y→lateral(取反)、Z→throttle、
+        K→roll、N→yaw(取反)，俯仰中立），由飞控 VECTORED 混控器完成
+        推进器分配。整体标定用 ~wrench_gain。
+        """
+        pwm = wrench_to_pwm(a, self.wrench_gain)
+        self._last_cmd = pwm
+        self._last_cmd_time = rospy.Time.now()
+        self._publish(pwm)
 
     def set_zero(self):
         self._last_cmd = np.full(self.n_thrusters, PWM_NEUTRAL)

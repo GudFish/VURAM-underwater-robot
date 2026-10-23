@@ -41,3 +41,5 @@ dist/
 .codex/
 
 results/
+# Policy model weights (binary, not tracked)
+/src/vuram_control/scripts/vuram_policy/models/

@@ -3,12 +3,13 @@
   <!-- ====================================================================
    policy_deploy.launch
    MuJoCo 训练策略在 ArduSub 栈上的部署入口：apm（MAVROS）+ 逐推进器直控
-   （set_6dof_cmd，固件 CUSTOM 1:1 帧 + RC override，保留 arm 门控）
+   （set_6dof_cmd，VECTORED 帧 6DOF 通道 + RC override，保留 arm 门控）
    + 20 Hz 策略闭环 + 可选 RViz 轨迹叠加显示。
 
-   链路：/mavros/local_position/odom → obs[22] → policy.pt → a[6] →
+   链路：/mavros/local_position/odom → obs[21]+history → deploy.pt → a[5] →
         PWM(1100~1900) → /dof_cmd → set_6dof_cmd（RC override）→
-        CH1~6 1:1 → MOTOR1~6（CUSTOM 帧直通混控）
+        6DOF 通道（pitch/roll/throttle/yaw/forward/lateral）→
+        VECTORED 混控器 → MOTOR1~6
    通道映射（thruster_interface.py）：SITL 物理表与实车接线均为孪生
         T0..T5 顺序，恒等映射 a[i]→CH(i+1)（tam_mix 默认关闭）；接线
         不一致时用 ~servo_map/~servo_sign 标定。
@@ -16,7 +17,7 @@
    注意：
    - 启动门控顺序：推进器桥接就绪（/dof_cmd/ready）→ MAVROS 参数表下载
      完成（/mavros/param/pull）→ 生成参考轨迹 → 20 Hz 闭环下发控制。
-   - CUSTOM 帧保留完整 arm 门控与 failsafe：未解锁无输出；节点死掉后
+   - arm 门控与 failsafe 保留：未解锁无输出；节点死掉后
      override 过期（RC_OVERRIDE_TIME=3s）+ FS_PILOT_INPUT=2 自动 disarm。
    - setup_fc 首次运行需为 true：设置 SYSID_MYGCS=1、SERVO1~6_FUNCTION
      =33~38、FRAME_CONFIG=7、ACRO_YAW_P=4.5（yaw 1:1）。FRAME_CONFIG 首次
@@ -30,7 +31,7 @@
   <!-- ==================== 飞控连接参数 ==================== -->
   <arg name="fcu_url" default="udp://127.0.0.1:14551@14555"/>
 
-  <!-- ==================== 推进器直控参数（CUSTOM 1:1 帧） ==================== -->
+  <!-- ==================== 推进器直控参数（VECTORED 帧 6DOF 通道） ==================== -->
   <!-- setup_fc: 启动时自动配置飞控参数（SYSID_MYGCS/SERVOx_FUNCTION/
        FRAME_CONFIG=7/ACRO_YAW_P）。 -->
   <arg name="setup_fc" default="false"/>
@@ -38,7 +39,7 @@
   <arg name="arm_vehicle" default="false"/>
 
   <!-- ==================== 策略与参考轨迹参数 ==================== -->
-  <arg name="model_dir" default="$(find vuram_control)/models/policy_v75"/>
+  <arg name="model_dir" default="$(find vuram_control)/scripts/vuram_policy/models/best"/>
   <arg name="spec" default="$(find vuram_control)/config/obs_act.yaml"/>
   <!-- ref_family: '' = 随机；line | lissajous | waypoints_dp -->
   <arg name="ref_family" default=""/>
@@ -78,10 +79,10 @@
     <arg name="fcu_url" value="$(arg fcu_url)"/>
   </include>
 
-  <!-- ==================== 推进器直控节点（CUSTOM 1:1 帧 + RC override） ==================== -->
+  <!-- ==================== 推进器直控节点（VECTORED 帧 6DOF 通道 + RC override） ==================== -->
   <node name="set_6dof_cmd" pkg="vuram_control" type="set_6dof_cmd.py" output="screen">
     <param name="setup_fc_params" type="bool" value="$(arg setup_fc)"/>
-    <param name="frame_config" type="int" value="7"/>
+    <param name="frame_config" type="int" value="1"/>
     <param name="acro_yaw_p" type="double" value="4.5"/>
     <param name="arm_vehicle" type="bool" value="$(arg arm_vehicle)"/>
     <param name="ready_topic" value="$(arg ready_topic)"/>

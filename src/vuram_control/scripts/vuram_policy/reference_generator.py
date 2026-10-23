@@ -1,9 +1,9 @@
 """Reference trajectory families: line / lissajous / waypoints_dp.
 
-Ported verbatim from auv_training/reference_generator.py (numpy-only).
+Ported from auv_training/reference_generator.py (numpy-only).
 sample_episode(rng) -> params dict.
-get_ref(params, t) -> (pos[3], rpy[3], vel_world[3], w_z).
-Reference roll/pitch are always 0; yaw follows the velocity heading.
+get_ref(params, t) -> (pos[3], quat_wxyz[4], vel_world[3], w_z).
+Reference attitude has zero roll/pitch; heading follows the velocity tangent.
 Peak reference speed is capped at MAX_REF_SPEED (vehicle feasibility).
 
 The depth band comes from work_env['z'] (defaults to the MuJoCo training
@@ -11,6 +11,8 @@ band); override it when deploying at a different operating depth (e.g. SITL
 at the surface).
 """
 import numpy as np
+
+from .utils import yaw_quat
 
 MAX_REF_SPEED = 0.5   # m/s
 
@@ -33,7 +35,6 @@ class ReferenceGenerator(object):
         When start_pos is given, the reference is anchored so that
         get_ref(params, 0)[0] == start_pos (used by the deployment/demo
         path, where the vehicle is NOT teleported toward the reference).
-        Without start_pos the origin is sampled inside the work envelope.
         `family` forces the trajectory family ('line' | 'lissajous' |
         'waypoints_dp'); None samples uniformly.
         """
@@ -128,8 +129,8 @@ class ReferenceGenerator(object):
         return _ref_waypoints(params, t, self.z_band)
 
     def ref_start_pose(self, params):
-        pos, rpy, _, _ = self.get_ref(params, 0.0)
-        return pos, rpy
+        pos, quat, _, _ = self.get_ref(params, 0.0)
+        return pos, quat
 
 
 def _heading_from_vel(v, w_z, yaw_prev=None):
@@ -148,8 +149,7 @@ def _ref_line(params, t):
     x0, y0, z0 = params['origin']
     pos = np.array([x0 + U * np.cos(psi) * t, y0 + U * np.sin(psi) * t, z0])
     vel = np.array([U * np.cos(psi), U * np.sin(psi), 0.0])
-    rpy = np.array([0.0, 0.0, psi])
-    return pos, rpy, vel, 0.0
+    return pos, yaw_quat(psi), vel, 0.0
 
 
 def _ref_lissajous(params, t):
@@ -167,8 +167,7 @@ def _ref_lissajous(params, t):
     v2 = vel[0] ** 2 + vel[1] ** 2
     w_z = (vel[0] * ay - vel[1] * ax) / max(v2, 1e-9)
     yaw, w_z = _heading_from_vel(vel, w_z)
-    rpy = np.array([0.0, 0.0, yaw])
-    return pos, rpy, vel, w_z
+    return pos, yaw_quat(yaw), vel, w_z
 
 
 def _ref_waypoints(params, t, z_band):
@@ -221,15 +220,13 @@ def _ref_waypoints(params, t, z_band):
             v2 = vel[0] ** 2 + vel[1] ** 2
             w_z = (vel[0] * acc[1] - vel[1] * acc[0]) / max(v2, 1e-9)
             yaw, w_z = _heading_from_vel(vel, w_z, yaw_prev)
-            rpy = np.array([0.0, 0.0, yaw])
-            return pos, rpy, vel, w_z
+            return pos, yaw_quat(yaw), vel, w_z
         yaw_prev = float(np.arctan2(waypoints[i + 1][1] - waypoints[i][1],
                                     waypoints[i + 1][0] - waypoints[i][0]))
         t_cum += T
     # past the end: hold the last waypoint with the last heading
     pos = waypoints[-1]
-    rpy = np.array([0.0, 0.0, yaw_prev])
-    return pos, rpy, np.zeros(3), 0.0
+    return pos, yaw_quat(yaw_prev), np.zeros(3), 0.0
 
 
 def _hermite(p0, p1, v0, v1, T, tau):

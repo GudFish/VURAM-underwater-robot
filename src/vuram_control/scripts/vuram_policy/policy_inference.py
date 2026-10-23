@@ -1,9 +1,18 @@
-"""TorchScript policy loader + 20 Hz deployment loop (ArduSub/MAVROS).
+"""TorchScript VND policy loader + 20 Hz deployment loop (ArduSub/MAVROS).
 
-The exported module has signature forward(obs[22]) -> a[6] (the stochastic
-deployment path, tanh(mean + std*eps)); obs normalization is folded into
-the module, so raw physical units go in. Deploy only: no episodes, no
-domain randomization, no HDF5, no termination pruning, no CSV logging.
+The exported module (deploy.pt) has signature
+forward(obs[21], history[20,18], valid) -> a[5] — a deterministic FiLM
+policy conditioned on a GRU history encoder (latent z = 0 until `valid`
+reaches the encoder context length). Obs and encoder normalization are
+folded into the module; raw physical units go in. Deploy only: no
+episodes, no domain randomization, no HDF5, no termination pruning, no
+CSV logging.
+
+动作契约（VND v4）：a[5] = 归一化机体力/力矩 [X,Y,Z,K,N]（无俯仰）。
+经 ThrusterInterface.set_wrench_action 直接映射到 6DOF 通道 PWM
+（X→forward、Y→lateral、Z→throttle、K→roll、N→yaw，符号按训练口径与
+ArduSub 通道语义换算），发布到 /dof_cmd（复用 AUV_ctrl_6dof 的
+set_6dof_cmd 链路，飞控 VECTORED 混控器完成推进器分配）。
 """
 import json
 import os
@@ -15,10 +24,10 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool
 
 from .reference_generator import ReferenceGenerator
-from .spec import build_obs, load_spec
+from .spec import build_obs, build_ref11, load_spec
 from .thruster_interface import ThrusterInterface
 from .traj_visualizer import TrajVisualizer
-from .utils import quat_to_rpy, world_to_body
+from .utils import world_to_body
 
 
 class PolicyInference(object):
@@ -28,18 +37,10 @@ class PolicyInference(object):
         import torch
         self.torch = torch
         torch.set_num_threads(2)   # don't starve the SITL/MAVROS stack
-        # ~device: 'cpu'（默认）| 'cuda'。实测小模型 GPU 反而更慢
-        # （kernel 启动 + 回传同步开销），故默认 CPU；显式指定 cuda
-        # 且 CUDA 不可用时回退 CPU 并告警。
-        device_arg = rospy.get_param('~device', 'cpu')
-        if device_arg.startswith('cuda') and not torch.cuda.is_available():
-            rospy.logwarn('device=%s requested but CUDA unavailable; '
-                          'falling back to cpu', device_arg)
-            device_arg = 'cpu'
-        self.device = torch.device(device_arg)
         self.model_dir = model_dir
         self.model = None
         self.version = None
+        self.history_shape = (20, 18)
         self._load()
 
     @property
@@ -47,36 +48,42 @@ class PolicyInference(object):
         return self.model is not None
 
     def _load(self):
-        pt_path = os.path.join(self.model_dir, 'policy.pt')
-        if not os.path.exists(pt_path):
-            rospy.logerr('no policy.pt in %s', self.model_dir)
+        pt_path = None
+        for name in ('deploy.pt', 'policy.pt'):
+            candidate = os.path.join(self.model_dir, name)
+            if os.path.exists(candidate):
+                pt_path = candidate
+                break
+        if pt_path is None:
+            rospy.logerr('no deploy.pt/policy.pt in %s', self.model_dir)
             return
         self.model = self.torch.jit.load(pt_path)
-        self.model.to(self.device)
         self.model.eval()
         spec_json = os.path.join(self.model_dir, 'spec.json')
         if os.path.exists(spec_json):
             with open(spec_json) as f:
-                self.version = json.load(f).get('policy_version')
-        rospy.loginfo('loaded policy version %s from %s (device: %s)',
-                      self.version, self.model_dir, self.device)
+                manifest = json.load(f)
+            self.version = manifest.get('version')
+            self.history_shape = tuple(manifest.get('history_shape', [20, 18]))
+        rospy.loginfo('loaded policy v%s from %s', self.version, self.model_dir)
 
-    def step(self, obs):
-        """obs[22] -> a[6] (stochastic deployment path)."""
+    def step(self, obs, history, valid):
+        """obs[21], history[20,18] (raw), valid int -> a[5]."""
         t = self.torch
         with t.no_grad():
-            o = t.from_numpy(np.asarray(obs, dtype=np.float32))[None].to(self.device)
-            a = self.model(o)
-        return a.cpu().numpy()[0].astype(np.float64)
+            o = t.from_numpy(np.asarray(obs, dtype=np.float32))[None]
+            h = t.from_numpy(np.asarray(history, dtype=np.float32))[None]
+            v = t.tensor([int(valid)], dtype=t.int64)
+            a = self.model(o, h, v)
+        return a.numpy()[0].astype(np.float64)
 
 
 class PoseState(object):
-    """MAVROS-odometry state snapshot: s[12] = [v_body6, rpy3, pos3].
+    """MAVROS odometry snapshot: s[13] = [v_body6, quat_wxyz4, pos3].
 
-    /mavros/local_position/odom reports twist in the BODY frame (ENU axes:
-    x forward / y left / z up), so with twist_in_world=False (the ArduSub
-    default, see config/obs_act.yaml) no world->body rotation is applied.
-    Pose is world ENU, matching the MuJoCo training convention.
+    /mavros/local_position/odom 与 DVL odom 的 twist 均为机体系（ENU 轴，
+    x 前 / y 左 / z 上），默认直接使用；~twist_in_world=true 时按四元数
+    转到机体系（Gazebo pose_gt 场景）。
     """
 
     def __init__(self, odom_topic, twist_in_world=False):
@@ -97,7 +104,7 @@ class PoseState(object):
                         pm.pose.pose.position.y,
                         pm.pose.pose.position.z])
         q = pm.pose.pose.orientation
-        rpy = quat_to_rpy([q.x, q.y, q.z, q.w])
+        q_wxyz = np.array([q.w, q.x, q.y, q.z])   # message xyzw -> state wxyz
         v = np.array([pm.twist.twist.linear.x,
                       pm.twist.twist.linear.y,
                       pm.twist.twist.linear.z])
@@ -105,79 +112,28 @@ class PoseState(object):
                       pm.twist.twist.angular.y,
                       pm.twist.twist.angular.z])
         if self.twist_in_world:
-            v = world_to_body(v, rpy)
-            w = world_to_body(w, rpy)
-        return {'state': np.concatenate([v, w, rpy, pos]),
+            v = world_to_body(v, q_wxyz)
+            w = world_to_body(w, q_wxyz)
+        return {'state': np.concatenate([v, w, q_wxyz, pos]),
                 'time': pm.header.stamp.to_sec()}
 
 
-def _run_external_ref_loop(inference, thrusters, pose, viz, spec, ref_topic):
-    """外部参考模式：订阅参考 Odometry（pos + quat(yaw) + vel + w_z），
-    无限运行至关机。无参考消息时回中并等待（配合 1 s 看门狗语义）。
-    episode_len_s/ref_family/ref_seed 在本模式被忽略。
-
-    注意：训练策略的参考轨迹永远在运动，"静止参考"不在训练分布内——
-    在重新训练出定点保持能力（训练侧加入 hold/hover 参考族）之前，
-    策略对静止参考的表现会漂移。参考本身由规划器锚定保证静止不动。
-    """
-    ref_msg = {'msg': None}
-    rospy.Subscriber(ref_topic, Odometry, lambda m: ref_msg.update(msg=m),
-                     queue_size=5)
-
-    a_prev = np.zeros(spec['a_dim'])
-    pos_errors = []
-    step_i = 0
-    rospy.loginfo('deploying policy version %s (ref_source=external, '
-                  'ref_topic=%s, episode_len_s ignored)',
-                  inference.version, ref_topic)
-
-    rate = rospy.Rate(spec['control_rate'])
-    while not rospy.is_shutdown():
-        snap = pose.step()
-        if snap is None:
-            rate.sleep()
-            continue
-        m = ref_msg['msg']
-        if m is None:
-            rospy.logwarn_throttle(5, 'no reference on %s yet; holding '
-                                   'neutral', ref_topic)
-            thrusters.set_zero()
-            rate.sleep()
-            continue
-        q = m.pose.pose.orientation
-        pos = np.array([m.pose.pose.position.x,
-                        m.pose.pose.position.y,
-                        m.pose.pose.position.z])
-        rpy = quat_to_rpy([q.x, q.y, q.z, q.w])
-        vel = np.array([m.twist.twist.linear.x,
-                        m.twist.twist.linear.y,
-                        m.twist.twist.linear.z])
-        ref10 = np.concatenate([pos, rpy, vel,
-                                [float(m.twist.twist.angular.z)]])
-        s = snap['state']
-        obs = build_obs(s, ref10, a_prev, spec['obs_layout'])
-        a = np.clip(inference.step(obs), -1.0, 1.0)
-        thrusters.set_action_norm(a)
-        a_prev = a
-        pos_errors.append(float(np.linalg.norm(ref10[0:3] - s[9:12])))
-        if step_i % 10 == 0:
-            viz.add_actual_point(s[9:12])
-        step_i += 1
-        rate.sleep()
-
-    thrusters.set_zero()
-    mean_err = float(np.mean(pos_errors)) if pos_errors else 0.0
-    rospy.loginfo('external ref loop done: steps=%d mean_pos_err=%.3f m',
-                  step_i, mean_err)
+def _history_tensor(history, context_len, history_dim):
+    """历史行 [s13+a5] 打包为 [context_len, history_dim]，最新行在最后，
+    不足部分零填充（与训练侧 demo_policy 一致）。"""
+    h = np.zeros((context_len, history_dim), np.float32)
+    if history:
+        h[-len(history):] = history
+    return h
 
 
 def run_policy_node(model_dir, spec_path, ref_family='',
                     episode_len_s=60.0):
     """Deployment loop: waits for the thruster bridge ready signal and the
     MAVROS parameter-list download, then runs odom state + reference ->
-    obs[22] -> a[6] -> thruster PWM on /dof_cmd at the control rate.
-    Reference (green) and actual (orange) trajectories are published for
-    RViz.
+    obs[21] + history -> a[5] wrench -> thruster PWM on /dof_cmd at the
+    control rate. Reference (green) and actual (orange) trajectories are
+    published for RViz.
 
     参考来源（~ref_source）：'internal' = 本节点随机生成轨迹（固定时长
     episode）；'external' = 订阅 ~ref_topic 上由外部节点（如 vuram_planning
@@ -185,6 +141,7 @@ def run_policy_node(model_dir, spec_path, ref_family='',
     """
     spec = load_spec(spec_path)
     odom_topic = rospy.get_param('~odom_topic', '/mavros/local_position/odom')
+    twist_in_world = rospy.get_param('~twist_in_world', False)
     # 参考来源：internal | external（非法值直接退出）
     ref_source = rospy.get_param('~ref_source', 'internal')
     ref_topic = rospy.get_param('~ref_topic', '/planning/reference_odom')
@@ -203,7 +160,7 @@ def run_policy_node(model_dir, spec_path, ref_family='',
 
     inference = PolicyInference(model_dir)
     if not inference.loaded:
-        rospy.logfatal('no policy.pt in %s', model_dir)
+        rospy.logfatal('no policy model in %s', model_dir)
         return
 
     # 等待推进器桥接节点（set_6dof_cmd）完成飞控参数配置并发布 latch 就绪
@@ -248,8 +205,8 @@ def run_policy_node(model_dir, spec_path, ref_family='',
             rospy.logwarn('MAVROS param pull unavailable (%s); continuing', e)
 
     thrusters = ThrusterInterface(
-        rospy.get_param('~cmd_topic', '/thruster_cmd'))
-    pose = PoseState(odom_topic, twist_in_world=spec['twist_in_world'])
+        rospy.get_param('~cmd_topic', '/dof_cmd'))
+    pose = PoseState(odom_topic, twist_in_world=twist_in_world)
     if ref_source == 'internal':
         work_env = {'x': [-8.0, 8.0], 'y': [-8.0, 8.0],
                     'z': [ref_z_min, ref_z_max]}
@@ -277,7 +234,7 @@ def run_policy_node(model_dir, spec_path, ref_family='',
     if snap is None:
         thrusters.set_zero()
         return
-    start_pos = snap['state'][9:12]
+    start_pos = snap['state'][10:13]
     family = ref_family or None
     ref_params = ref_gen.sample_episode(rng, start_pos=start_pos,
                                         family=family)
@@ -285,12 +242,14 @@ def run_policy_node(model_dir, spec_path, ref_family='',
 
     dt = spec['dt']
     n_steps = int(round(episode_len_s / dt))
-    a_prev = np.zeros(spec['a_dim'])
+    a_prev = np.zeros(spec['a_dim'])                   # 5
+    context_len, history_dim = inference.history_shape
+    history = []
     t0 = None
     pos_errors = []
     step_i = 0
-    rospy.loginfo('deploying policy version %s (ref_family=%s, ref_seed=%d, '
-                  'episode_len_s=%.1f)',
+    rospy.loginfo('deploying policy v%s (ref_source=internal, ref_family=%s, '
+                  'ref_seed=%d, episode_len_s=%.1f)',
                   inference.version, family, ref_seed, episode_len_s)
 
     rate = rospy.Rate(spec['control_rate'])
@@ -303,20 +262,89 @@ def run_policy_node(model_dir, spec_path, ref_family='',
             t0 = snap['time']
         t = snap['time'] - t0
         s = snap['state']
-        pos, rpy, vel, w_z = ref_gen.get_ref(ref_params, t)
-        ref10 = np.concatenate([pos, rpy, vel, [w_z]])
-        obs = build_obs(s, ref10, a_prev, spec['obs_layout'])
-        a = inference.step(obs)
+        pos, quat, vel, w_z = ref_gen.get_ref(ref_params, t)
+        ref11 = build_ref11(pos, quat, vel, w_z)
+        obs = build_obs(s, ref11, a_prev, spec['obs_layout'])
+        h = _history_tensor(history, context_len, history_dim)
+        a = inference.step(obs, h, len(history))
         a = np.clip(a, -1.0, 1.0)
-        thrusters.set_action_norm(a)
+        thrusters.set_wrench_action(a)
+        history.append(np.concatenate((s, a)).astype(np.float32))
+        history = history[-context_len:]
         a_prev = a
-        pos_errors.append(float(np.linalg.norm(ref10[0:3] - s[9:12])))
+        pos_errors.append(float(np.linalg.norm(ref11[0:3] - s[10:13])))
         if step_i % 10 == 0:
-            viz.add_actual_point(s[9:12])
+            viz.add_actual_point(s[10:13])
         step_i += 1
         rate.sleep()
 
     thrusters.set_zero()
     mean_err = float(np.mean(pos_errors)) if pos_errors else 0.0
     rospy.loginfo('deploy done: steps=%d mean_pos_err=%.3f m',
+                  step_i, mean_err)
+
+
+def _run_external_ref_loop(inference, thrusters, pose, viz, spec, ref_topic):
+    """外部参考模式：订阅参考 Odometry（pos + quat + vel + w_z），
+    无限运行至关机。无参考消息时回中并等待（配合 1 s 看门狗语义）。
+    episode_len_s/ref_family/ref_seed 在本模式被忽略。
+
+    注意：训练策略的参考轨迹永远在运动，"静止参考"不在训练分布内——
+    在重新训练出定点保持能力（训练侧加入 hold/hover 参考族）之前，
+    策略对静止参考的表现会漂移。参考本身由规划器锚定保证静止不动。
+    """
+    ref_msg = {'msg': None}
+    rospy.Subscriber(ref_topic, Odometry, lambda m: ref_msg.update(msg=m),
+                     queue_size=5)
+
+    a_prev = np.zeros(spec['a_dim'])
+    context_len, history_dim = inference.history_shape
+    history = []
+    pos_errors = []
+    step_i = 0
+    rospy.loginfo('deploying policy v%s (ref_source=external, ref_topic=%s, '
+                  'episode_len_s ignored)',
+                  inference.version, ref_topic)
+
+    rate = rospy.Rate(spec['control_rate'])
+    while not rospy.is_shutdown():
+        snap = pose.step()
+        if snap is None:
+            rate.sleep()
+            continue
+        m = ref_msg['msg']
+        if m is None:
+            rospy.logwarn_throttle(5, 'no reference on %s yet; holding '
+                                   'neutral', ref_topic)
+            thrusters.set_zero()
+            rate.sleep()
+            continue
+        q = m.pose.pose.orientation
+        pos = np.array([m.pose.pose.position.x,
+                        m.pose.pose.position.y,
+                        m.pose.pose.position.z])
+        quat = np.array([q.w, q.x, q.y, q.z])   # xyzw -> wxyz
+        vel = np.array([m.twist.twist.linear.x,
+                        m.twist.twist.linear.y,
+                        m.twist.twist.linear.z])
+        ref11 = build_ref11(pos, quat, vel,
+                            float(m.twist.twist.angular.z))
+        s = snap['state']
+        obs = build_obs(s, ref11, a_prev, spec['obs_layout'])
+        h = _history_tensor(history, context_len, history_dim)
+        a = inference.step(obs, h, len(history))
+        a = np.clip(a, -1.0, 1.0)
+        thrusters.set_wrench_action(a)
+        history.append(np.concatenate((s, a)).astype(np.float32))
+        history = history[-context_len:]
+        a_prev = a
+        pos_errors.append(float(np.linalg.norm(ref11[0:3] - s[10:13])))
+        if step_i % 10 == 0:
+            viz.add_actual_point(s[10:13])
+        step_i += 1
+        rate.sleep()
+
+    thrusters.set_zero()
+    mean_err = float(np.mean(pos_errors)) if pos_errors else 0.0
+    rospy.loginfo('external ref loop done: steps=%d mean_pos_err=%.3f m',
                   step_i, mean_err)

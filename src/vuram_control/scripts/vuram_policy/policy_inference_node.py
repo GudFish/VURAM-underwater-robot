@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Vuram RL policy deployment node on the ArduSub/MAVROS stack.
 
-Loads the MuJoCo-trained TorchScript policy from --model_dir, samples a
-reference trajectory (line | lissajous | waypoints_dp) anchored at the
-vehicle's current pose, and runs the 20 Hz closed loop:
-odom -> obs[22] -> a[6] -> thruster PWM -> /thruster_cmd
-(the set_thruster_cmd node forwards each channel to MOTOR1..6). Reference
-(green) and actual (orange) trajectories are published for RViz.
+Loads the MuJoCo-trained TorchScript policy from --model_dir (VND v4:
+deploy.pt, obs[21] + history[20,18] + valid -> a[5] normalized wrench),
+samples a reference trajectory (line | lissajous | waypoints_dp) anchored
+at the vehicle's current pose, and runs the 20 Hz closed loop:
+odom -> obs[21] -> a[5] wrench -> thruster PWM -> /dof_cmd
+(the set_6dof_cmd node forwards each channel via RC override, CUSTOM 1:1
+frame). Reference (green) and actual (orange) trajectories are published
+for RViz.
 
 用法：
   roslaunch vuram_control policy_deploy.launch
   rosrun vuram_control policy_inference_node.py \
-      --model_dir $(rospack find vuram_control)/models/policy_v75 \
+      --model_dir $(rospack find vuram_control)/scripts/vuram_policy/models/best \
       --spec $(rospack find vuram_control)/config/obs_act.yaml
 """
 import argparse
@@ -26,6 +28,10 @@ SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 if str(SCRIPT_ROOT) not in sys.path:
     sys.path.insert(0, str(SCRIPT_ROOT))
 
+# 模型目录随包内脚本位置（scripts/vuram_policy/models/），与 launch 的
+# model_dir 默认值保持一致
+MODELS_DIR = Path(__file__).resolve().parent / 'models'
+
 from vuram_policy.policy_inference import run_policy_node
 
 
@@ -33,9 +39,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     pkg_path = rospkg.RosPack().get_path('vuram_control')
     parser.add_argument('--model_dir',
-                        default=os.path.join(pkg_path, 'models',
-                                             'policy_v75'),
-                        help='directory containing policy.pt (+ spec.json)')
+                        default=str(MODELS_DIR / 'policy_v15'),
+                        help='directory containing deploy.pt (+ spec.json)')
     parser.add_argument('--spec',
                         default=os.path.join(pkg_path, 'config',
                                              'obs_act.yaml'),

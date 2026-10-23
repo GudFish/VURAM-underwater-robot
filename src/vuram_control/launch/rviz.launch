@@ -11,7 +11,7 @@
   <!-- ==================== 机器人模型参数 ==================== -->
   <!-- 这一组参数用于将 AUV 的 URDF 模型加载到 ROS 参数服务器。 -->
   <!-- <param name="robot_description" textfile="$(find vuram_description)/urdf/AUV.urdf" /> -->
-  <param name="robot_description" textfile="$(find vuram_description)/urdf/open_frame_AUV.urdf" />
+  <param name="robot_description" textfile="$(find vuram_description)/urdf/vuram.urdf" />
 
   <!-- ==================== TF 与模型发布节点 ==================== -->
   <!-- 启动模型状态发布和 map 到 base_link 的 TF 广播节点。 -->
