@@ -1,150 +1,57 @@
-# sub_planning
+# VURAM ROS1 Packages
 
-`sub_planning` is a ROS `catkin` package for underwater vehicle planning, target tracking, and visualization. The repository contains vehicle control nodes, MPC-based trackers, target/sensor simulators, and RViz visualization tools built around MAVROS and ArduSub-style topics.
+## 1. Project Overview
 
-## Features
+This catkin workspace provides ROS1 drivers, robot models, motion control, trajectory planning, and algorithm validation tools for VURAM. It supports sensor integration, simulation, and experiments through MAVROS/ArduSub, with RViz visualization and data analysis utilities.
 
-- Body-velocity and optional position control helpers for the vehicle
-- MPC trackers for dynamic-target tracking and belief-aware target tracking
-- Simulated target generation, acoustic TDOA sensing, and forward sonar sensing
-- RViz helpers for boundaries, target belief, TF, and sonar visualization
+| VURAM Axonometric View | VURAM Front View |
+| :---: | :---: |
+| ![VURAM Axonometric View](src/vuram_description/figures/vuram/vuram_axonometric_view.png) | ![VURAM Front View](src/vuram_description/figures/vuram/vuram_front_view.png) |
 
-## Repository Layout
+| VURAM Exploded View |
+| :---: |
+| ![VURAM Exploded View](src/vuram_description/figures/vuram/vuram_exploded_view.png) |
 
-```text
-ardupilot_ws/
-├── install_sub_planning_deps.sh
-└── src/
-    ├── sub_planning/        # estimation, planning, simulation & experiment orchestration
-    ├── vuram_control/       # low-level AUV control (MAVROS/ArduSub interface)
-    ├── fls_detector/        # forward-looking sonar processing & detection
-    ├── vuram_description/   # AUV meshes and URDF models
-    └── sonar_driver/        # real FLS hardware driver
-```
+## 2. About VURAM
 
-## Environment
+VURAM is an underwater robot platform for research in underwater perception, localization, motion control, and target tracking. Its onboard sensors include a forward-looking sonar and a Water Linked DVL A50.
 
-- Ubuntu with ROS 1 `catkin`
-- Recommended ROS distribution: `noetic`
-- Python 3
-- `rosdep`, `catkin_make`, and `pip`
+For details on the robot's design, see the [VURAM design website](https://gudfish.github.io/).
 
-The launch files assume a MAVROS-based vehicle stack and, by default, include:
+## 3. Package Overview
 
-- `mavros`
-- `rviz`
-- `robot_state_publisher`
-- `tf` / `tf2_ros`
+The `src/` directory currently contains the following ROS packages, grouped by their primary purpose:
 
-## Installation
+| Category | Package | Purpose |
+| --- | --- | --- |
+| $\color{blue}\text{Sensor Drivers}$ | [sonar_driver](src/sonar_driver/) | Publishes images from a physical forward-looking sonar using the vendor SDK. |
+| $\color{blue}\text{Sensor Drivers}$ | [dvl_odometry](src/dvl_odometry/) | Provides Water Linked DVL A50 data, odometry, calibration/reset services, and a device simulator. |
+| $\color{teal}\text{Robot Description}$ | [vuram_description](src/vuram_description/) | Provides URDF files, meshes, and illustrations for robot visualization. |
+| $\color{purple}\text{Basic Control}$ | [vuram_control](src/vuram_control/) | Provides MAVROS/ArduSub motion and thruster control, trained policy deployment, and visualization. |
+| $\color{orange}\text{Trajectory Planning}$ | [vuram_planning](src/vuram_planning/) | Generates smooth trajectories to RViz goals at the current depth for policy tracking. |
+| $\color{red}\text{Algorithm Validation}$ | [fls_detector](src/fls_detector/) | Provides sonar simulation, image-based target detection, and sensing-range visualization. |
+| $\color{red}\text{Algorithm Validation}$ | [sub_planning](src/sub_planning/) | Provides target estimation, MPC/LOS tracking, sensor simulation, and experiment evaluation. |
 
-Clone the repository into a catkin workspace, then run the provided install script:
+For DVL connection parameters and interfaces, see the [dvl_odometry guide](src/dvl_odometry/README.md).
 
-```bash
-cd /path/to/ardupilot_ws
-chmod +x install_sub_planning_deps.sh
-./install_sub_planning_deps.sh
-catkin_make
-source devel/setup.bash
-```
+## 4. Test Environment
 
-If your ROS distribution is not `noetic`, set it before running the script:
+The project's existing development and build records correspond to the following environment:
 
-```bash
-export ROS_DISTRO=noetic
-./install_sub_planning_deps.sh
-```
+| Component | Version / Tool |
+| --- | --- |
+| Operating System | Ubuntu 20.04.6 LTS (Focal Fossa) |
+| ROS | ROS1 Noetic |
+| Build System | catkin (`catkin_make`) |
+| Python | Python 3 |
 
-What the script does:
+The vendor SDK included with `sonar_driver` targets Linux ARM64 (`aarch64`). The current build configuration compiles this package only on `aarch64` / `arm64` platforms and skips it on other architectures. These environment records do not imply that every package has completed testing on the physical robot. Compatibility with other Ubuntu and ROS versions has not been confirmed.
 
-- sources `/opt/ros/$ROS_DISTRO/setup.bash`
-- installs ROS dependencies via `rosdep`
-- installs Python dependencies from `src/sub_planning/requirements.txt`
+## 5. Simulation Without a Physical Robot
 
-What you do after the script finishes:
+If a physical robot is unavailable, you can use the simulation approaches described in the [official ArduPilot simulation documentation](https://ardupilot.org/dev/docs/simulation-2.html):
 
-- build the workspace with `catkin_make`
-- source `devel/setup.bash`
+- **SITL (Software In The Loop):** runs ArduPilot firmware and a vehicle dynamics model on a computer without a physical flight controller. Use ArduSub SITL to test the ROS control and planning interfaces through MAVROS.
+- **Gazebo with SITL:** combines ArduPilot SITL with a simulated environment for physics and visualization. Underwater simulation requires a suitable vehicle model and simulation plugins configured for ArduSub.
 
-## Python Dependencies
-
-The project keeps non-ROS Python dependencies in:
-
-- [src/sub_planning/requirements.txt](/home/lhy/ardupilot_ws/src/sub_planning/requirements.txt)
-
-Current Python dependencies:
-
-- `casadi`
-- `numpy`
-- `pymap3d`
-- `scipy`
-- `shapely`
-
-## ROS Dependencies
-
-ROS dependencies are declared in:
-
-- [src/sub_planning/package.xml](/home/lhy/ardupilot_ws/src/sub_planning/package.xml)
-
-This package currently depends on ROS components such as:
-
-- `geometry_msgs`
-- `nav_msgs`
-- `mavros`
-- `mavros_msgs`
-- `sensor_msgs`
-- `visualization_msgs`
-- `rospy`
-- `tf`
-- `tf2_ros`
-- `rviz`
-- `robot_state_publisher`
-
-## Common Usage
-
-After building the workspace:
-
-```bash
-cd /path/to/ardupilot_ws
-source /opt/ros/noetic/setup.bash
-source devel/setup.bash
-```
-
-### 1. Vehicle control stack
-
-```bash
-roslaunch vuram_control common_vehicle_control.launch
-```
-
-This includes the MAVROS bridge launch from `apm.launch`, the boundary loader, control nodes, and RViz support.
-
-### 2. 2D MPC planner
-
-```bash
-roslaunch sub_planning mpc_2d.launch
-```
-
-### 3. Forward sonar simulation
-
-```bash
-roslaunch fls_detector forward_sonar_sim.launch
-```
-
-To show the sonar image window:
-
-```bash
-roslaunch fls_detector forward_sonar_sim.launch show_window:=true
-```
-
-## Notes
-
-- `apm.launch` currently uses `udp://127.0.0.1:14551@14555` as the MAVROS FCU URL.
-- Several launch files expect MAVROS topics such as `/mavros/local_position/odom` and `/mavros/state`.
-- If you only want dependency installation, run `./install_sub_planning_deps.sh` and compile later when you are ready.
-
-## Troubleshooting
-
-- If `rosdep` fails, initialize it first on the target machine and retry.
-- If `catkin_make` is not found, install ROS catkin build tools for your distribution.
-- If OpenCV windows do not appear, check that the target machine has a desktop environment and OpenCV GUI support.
-- If MAVROS cannot connect, update the FCU URL in [src/vuram_control/launch/apm.launch](/home/lhy/ardupilot_ws/src/vuram_control/launch/apm.launch:1) to match your simulator or hardware.
+Set up and start the simulator separately, then connect this workspace through MAVROS. This repository does not include a complete Gazebo simulation environment or launch the external simulator automatically.
