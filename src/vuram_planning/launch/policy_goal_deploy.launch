@@ -28,7 +28,7 @@
   <arg name="arm_vehicle" default="false"/>
 
   <!-- ==================== 策略参数 ==================== -->
-  <arg name="model_dir" default="$(find vuram_control)/scripts/vuram_policy/models/policy_v15"/>
+  <arg name="model_dir" default="$(find vuram_control)/scripts/vuram_policy/models/policy_v000012"/>
   <arg name="spec" default="$(find vuram_control)/config/obs_act.yaml"/>
   <arg name="device" default="cpu"/>
   <arg name="wait_ready" default="true"/>
@@ -36,13 +36,13 @@
   <arg name="wait_param_list" default="true"/>
   <arg name="param_pull_service" default="/mavros/param/pull"/>
   <arg name="dof_cmd_topic" default="/dof_cmd"/>
-  <arg name="tam_mix" default="false"/>
 
   <!-- ==================== 定位源切换（同 AUV_ctrl_custom.launch） ==================== -->
   <arg name="use_dvl" default="false"/>
   <arg name="odom_source" default="mavros"/>  <!-- mavros | dvl -->
   <arg name="dvl_ip" default="192.168.1.95"/>
   <arg name="odom_topic" default="$(eval '/dvl/odom' if arg('odom_source') == 'dvl' else '/mavros/local_position/odom')"/>
+  <arg name="twist_in_world" default="false"/>
   <arg name="viz_frame_id" default="$(eval 'odom' if arg('odom_source') == 'dvl' else 'map')"/>
 
   <!-- ==================== 规划器参数 ==================== -->
@@ -101,13 +101,13 @@
     <param name="device" value="$(arg device)"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
     <param name="cmd_topic" value="$(arg dof_cmd_topic)"/>
+    <param name="twist_in_world" value="$(arg twist_in_world)"/>
     <param name="viz" value="$(arg enable_viz)"/>
     <param name="viz_frame_id" value="$(arg viz_frame_id)"/>
     <param name="wait_ready" value="$(arg wait_ready)"/>
     <param name="ready_topic" value="$(arg ready_topic)"/>
     <param name="wait_param_list" value="$(arg wait_param_list)"/>
     <param name="param_pull_service" value="$(arg param_pull_service)"/>
-    <param name="tam_mix" value="$(arg tam_mix)"/>
   </node>
 
   <!-- ==================== RViz 可视化 ==================== -->

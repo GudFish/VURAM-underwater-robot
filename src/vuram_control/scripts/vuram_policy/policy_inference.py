@@ -14,6 +14,7 @@ CSV logging.
 ArduSub 通道语义换算），发布到 /dof_cmd（复用 AUV_ctrl_6dof 的
 set_6dof_cmd 链路，飞控 VECTORED 混控器完成推进器分配）。
 """
+import hashlib
 import json
 import os
 
@@ -24,22 +25,29 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool
 
 from .reference_generator import ReferenceGenerator
-from .spec import build_obs, build_ref11, load_spec
+from .spec import (build_obs, build_ref11, get_observation_encoding, load_spec,
+                   obs_dim_from_layout)
 from .thruster_interface import ThrusterInterface
 from .traj_visualizer import TrajVisualizer
 from .utils import world_to_body
 
 
 class PolicyInference(object):
-    def __init__(self, model_dir):
+    def __init__(self, model_dir, device='cpu'):
         # torch is imported lazily: startup stays fast and the missing-model
         # error path never needs it
         import torch
         self.torch = torch
         torch.set_num_threads(2)   # don't starve the SITL/MAVROS stack
-        self.model_dir = model_dir
+        self.device = torch.device(device)
+        if self.device.type == 'cuda' and not torch.cuda.is_available():
+            rospy.logwarn('CUDA unavailable; using CPU for policy inference')
+            self.device = torch.device('cpu')
+        self.model_dir = os.path.abspath(os.path.expanduser(model_dir))
         self.model = None
         self.version = None
+        self.manifest = {}
+        self.observation_encoding = None
         self.history_shape = (20, 18)
         self._load()
 
@@ -48,40 +56,79 @@ class PolicyInference(object):
         return self.model is not None
 
     def _load(self):
-        pt_path = None
-        for name in ('deploy.pt', 'policy.pt'):
-            candidate = os.path.join(self.model_dir, name)
-            if os.path.exists(candidate):
-                pt_path = candidate
-                break
-        if pt_path is None:
-            rospy.logerr('no deploy.pt/policy.pt in %s', self.model_dir)
+        pt_path = os.path.join(self.model_dir, 'deploy.pt')
+        if not os.path.isfile(pt_path):
+            rospy.logerr('no deploy.pt in %s', self.model_dir)
             return
-        self.model = self.torch.jit.load(pt_path)
-        self.model.eval()
         spec_json = os.path.join(self.model_dir, 'spec.json')
-        if os.path.exists(spec_json):
-            with open(spec_json) as f:
-                manifest = json.load(f)
-            self.version = manifest.get('version')
-            self.history_shape = tuple(manifest.get('history_shape', [20, 18]))
-        rospy.loginfo('loaded policy v%s from %s', self.version, self.model_dir)
+        with open(spec_json) as f:
+            self.manifest = json.load(f)
+        manifest = self.manifest
+        self.observation_encoding = get_observation_encoding(manifest)
+        if manifest['schema_version'] != 4:
+            raise ValueError('expected a VND v4 deploy snapshot')
+        if manifest.get('actor_future_spec'):
+            raise ValueError('policy requires unsupported future-reference inputs')
+        self.version = manifest['version']
+        self.history_shape = tuple(manifest['history_shape'])
+        if (manifest['obs_dim'] != 21 or
+                manifest['action_dim'] != 5 or
+                self.history_shape != (20, 18)):
+            raise ValueError('expected obs[21], history[20,18] -> action[5]')
+        if manifest['history_encoding'] != \
+                'window_relative_position_v1':
+            raise ValueError('unsupported history encoding')
+        with open(pt_path, 'rb') as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        if digest != manifest['model_sha256']:
+            raise ValueError('deploy snapshot digest mismatch')
+        model = self.torch.jit.load(pt_path, map_location=self.device).eval()
+        model_encoding = getattr(getattr(model, 'policy', None),
+                                 'observation_encoding', None)
+        if model_encoding != self.observation_encoding:
+            raise ValueError('deploy manifest observation encoding differs from the scripted policy')
+        self.model = model
+        rospy.loginfo('loaded policy v%s (%s, device=%s) from %s',
+                      self.version, self.observation_encoding, self.device,
+                      self.model_dir)
+
+    def validate_spec(self, spec):
+        """Check timing/layout before any command can reach the vehicle.
+
+        Both the ROS configuration and the snapshot must use body-relative inputs.
+        """
+        get_observation_encoding(spec)
+        if spec['a_dim'] != 5 or obs_dim_from_layout(spec['obs_layout']) != 21:
+            raise ValueError('ROS specification must have obs[21] and action[5]')
+        dt = float(spec['dt'])
+        if (not np.isfinite(dt) or dt <= 0 or
+                not np.isclose(float(spec['control_rate']) * dt, 1.0)):
+            raise ValueError('control_rate must equal 1 / dt')
+        if not np.isclose(float(self.manifest['dt']), dt):
+            raise ValueError('ROS control period differs from the deploy snapshot')
+
+    def observe(self, state, reference, previous, layout):
+        """Build body-relative observations in both reference loops."""
+        return build_obs(state, reference, previous, layout)
 
     def step(self, obs, history, valid):
         """obs[21], history[20,18] (raw), valid int -> a[5]."""
         t = self.torch
         with t.no_grad():
-            o = t.from_numpy(np.asarray(obs, dtype=np.float32))[None]
-            h = t.from_numpy(np.asarray(history, dtype=np.float32))[None]
-            v = t.tensor([int(valid)], dtype=t.int64)
+            o = t.as_tensor(np.asarray(obs, dtype=np.float32), device=self.device)[None]
+            h = t.as_tensor(np.asarray(history, dtype=np.float32), device=self.device)[None]
+            v = t.tensor([int(valid)], dtype=t.int64, device=self.device)
             a = self.model(o, h, v)
-        return a.numpy()[0].astype(np.float64)
+        action = a.cpu().numpy()[0].astype(np.float64)
+        if action.shape != (5,) or not np.isfinite(action).all():
+            raise ValueError('invalid deploy action: expected finite action[5]')
+        return action
 
 
 class PoseState(object):
     """MAVROS odometry snapshot: s[13] = [v_body6, quat_wxyz4, pos3].
 
-    /mavros/local_position/odom 与 DVL odom 的 twist 均为机体系（ENU 轴，
+    /mavros/local_position/odom 与 DVL odom 的 twist 均为机体系（FLU 轴，
     x 前 / y 左 / z 上），默认直接使用；~twist_in_world=true 时按四元数
     转到机体系（Gazebo pose_gt 场景）。
     """
@@ -158,10 +205,11 @@ def run_policy_node(model_dir, spec_path, ref_family='',
     ref_z_min = float(rospy.get_param('~ref_z_min', -52.5))
     ref_z_max = float(rospy.get_param('~ref_z_max', -47.5))
 
-    inference = PolicyInference(model_dir)
+    inference = PolicyInference(model_dir, device=rospy.get_param('~device', 'cpu'))
     if not inference.loaded:
         rospy.logfatal('no policy model in %s', model_dir)
         return
+    inference.validate_spec(spec)
 
     # 等待推进器桥接节点（set_6dof_cmd）完成飞控参数配置并发布 latch 就绪
     # 信号后再开始生成参考轨迹与下发控制；SITL 首次参数表下载可达数十秒。
@@ -206,6 +254,7 @@ def run_policy_node(model_dir, spec_path, ref_family='',
 
     thrusters = ThrusterInterface(
         rospy.get_param('~cmd_topic', '/dof_cmd'))
+    rospy.on_shutdown(thrusters.shutdown)
     pose = PoseState(odom_topic, twist_in_world=twist_in_world)
     if ref_source == 'internal':
         work_env = {'x': [-8.0, 8.0], 'y': [-8.0, 8.0],
@@ -264,7 +313,7 @@ def run_policy_node(model_dir, spec_path, ref_family='',
         s = snap['state']
         pos, quat, vel, w_z = ref_gen.get_ref(ref_params, t)
         ref11 = build_ref11(pos, quat, vel, w_z)
-        obs = build_obs(s, ref11, a_prev, spec['obs_layout'])
+        obs = inference.observe(s, ref11, a_prev, spec['obs_layout'])
         h = _history_tensor(history, context_len, history_dim)
         a = inference.step(obs, h, len(history))
         a = np.clip(a, -1.0, 1.0)
@@ -289,9 +338,8 @@ def _run_external_ref_loop(inference, thrusters, pose, viz, spec, ref_topic):
     无限运行至关机。无参考消息时回中并等待（配合 1 s 看门狗语义）。
     episode_len_s/ref_family/ref_seed 在本模式被忽略。
 
-    注意：训练策略的参考轨迹永远在运动，"静止参考"不在训练分布内——
-    在重新训练出定点保持能力（训练侧加入 hold/hover 参考族）之前，
-    策略对静止参考的表现会漂移。参考本身由规划器锚定保证静止不动。
+    参考位置/姿态与线速度使用同一世界系；此处由模型的观测编码完成
+    机体系转换。当前训练包含 setpoint，支持规划器到达终点后的静止参考。
     """
     ref_msg = {'msg': None}
     rospy.Subscriber(ref_topic, Odometry, lambda m: ref_msg.update(msg=m),
@@ -330,7 +378,7 @@ def _run_external_ref_loop(inference, thrusters, pose, viz, spec, ref_topic):
         ref11 = build_ref11(pos, quat, vel,
                             float(m.twist.twist.angular.z))
         s = snap['state']
-        obs = build_obs(s, ref11, a_prev, spec['obs_layout'])
+        obs = inference.observe(s, ref11, a_prev, spec['obs_layout'])
         h = _history_tensor(history, context_len, history_dim)
         a = inference.step(obs, h, len(history))
         a = np.clip(a, -1.0, 1.0)

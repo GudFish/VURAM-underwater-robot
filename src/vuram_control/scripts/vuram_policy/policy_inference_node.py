@@ -13,7 +13,7 @@ for RViz.
 用法：
   roslaunch vuram_control policy_deploy.launch
   rosrun vuram_control policy_inference_node.py \
-      --model_dir $(rospack find vuram_control)/scripts/vuram_policy/models/best \
+      --model_dir $(rospack find vuram_control)/scripts/vuram_policy/models/policy_v000012 \
       --spec $(rospack find vuram_control)/config/obs_act.yaml
 """
 import argparse
@@ -39,7 +39,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     pkg_path = rospkg.RosPack().get_path('vuram_control')
     parser.add_argument('--model_dir',
-                        default=str(MODELS_DIR / 'policy_v15'),
+                        default=str(MODELS_DIR / 'policy_v000012'),
                         help='directory containing deploy.pt (+ spec.json)')
     parser.add_argument('--spec',
                         default=os.path.join(pkg_path, 'config',

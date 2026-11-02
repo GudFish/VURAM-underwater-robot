@@ -10,9 +10,10 @@
         PWM(1100~1900) → /dof_cmd → set_6dof_cmd（RC override）→
         6DOF 通道（pitch/roll/throttle/yaw/forward/lateral）→
         VECTORED 混控器 → MOTOR1~6
-   通道映射（thruster_interface.py）：SITL 物理表与实车接线均为孪生
-        T0..T5 顺序，恒等映射 a[i]→CH(i+1)（tam_mix 默认关闭）；接线
-        不一致时用 ~servo_map/~servo_sign 标定。
+   仅支持机体系观测编码；策略将位置误差与参考线速度旋转到
+        当前机体系，历史仍输入原始 [state13, action5]。
+   通道映射（thruster_interface.py）：[X,Y,Z,K,N] →
+        [forward,lateral,throttle,roll,yaw]，Y/N 取反，pitch 中立。
 
    注意：
    - 启动门控顺序：推进器桥接就绪（/dof_cmd/ready）→ MAVROS 参数表下载
@@ -39,7 +40,7 @@
   <arg name="arm_vehicle" default="false"/>
 
   <!-- ==================== 策略与参考轨迹参数 ==================== -->
-  <arg name="model_dir" default="$(find vuram_control)/scripts/vuram_policy/models/best"/>
+  <arg name="model_dir" default="$(find vuram_control)/scripts/vuram_policy/models/policy_v000012"/>
   <arg name="spec" default="$(find vuram_control)/config/obs_act.yaml"/>
   <!-- ref_family: '' = 随机；line | lissajous | waypoints_dp -->
   <arg name="ref_family" default=""/>
@@ -47,8 +48,7 @@
   <arg name="ref_seed" default="-1"/>
   <arg name="episode_len_s" default="60.0"/>
   <!-- device: 策略推理设备 — cpu（默认）| cuda。
-       实测 22→6 小 MLP 单步 GPU 反而更慢（1.97 vs 0.29 ms，kernel 启动+
-       回传同步开销），故默认 cpu；cuda 不可用时脚本自动回退 cpu 并告警。 -->
+       cuda 不可用时脚本自动回退 cpu 并告警。 -->
   <arg name="device" default="cpu"/>
   <!-- wait_ready: 等待推进器桥接节点完成飞控参数配置并发布就绪信号后再开始
        生成参考轨迹与下发控制（SITL 首次参数表下载可达数十秒）。 -->
@@ -65,12 +65,9 @@
 
   <!-- ==================== 话题与显示开关 ==================== -->
   <arg name="odom_topic" default="/mavros/local_position/odom"/>
+  <!-- 默认 twist 为机体系 FLU；世界系 twist（如 pose_gt）置 true。 -->
+  <arg name="twist_in_world" default="false"/>
   <arg name="dof_cmd_topic" default="/dof_cmd"/>
-  <!-- tam_mix: SITL 物理表已改为孪生几何（MOTOR1..6 = 孪生 T0..T5，与实车
-       MAIN OUT 1~6 接线一致）→ 默认 false 恒等映射；仅在旧版原版镜像几何
-       SITL 上才需要 true（TAM 伪逆混合补偿）。接线不一致用
-       ~servo_map/~servo_sign 标定。 -->
-  <arg name="tam_mix" default="false"/>
   <arg name="enable_viz" default="true"/>
   <arg name="enable_rviz" default="true"/>
 
@@ -101,6 +98,7 @@
     <param name="ref_source" value="internal"/>
     <param name="device" value="$(arg device)"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="twist_in_world" value="$(arg twist_in_world)"/>
     <param name="cmd_topic" value="$(arg dof_cmd_topic)"/>
     <param name="ref_z_min" value="$(arg ref_z_min)"/>
     <param name="ref_z_max" value="$(arg ref_z_max)"/>
@@ -109,7 +107,6 @@
     <param name="ready_topic" value="$(arg ready_topic)"/>
     <param name="wait_param_list" value="$(arg wait_param_list)"/>
     <param name="param_pull_service" value="$(arg param_pull_service)"/>
-    <param name="tam_mix" value="$(arg tam_mix)"/>
   </node>
 
   <!-- ==================== RViz 可视化 ==================== -->
