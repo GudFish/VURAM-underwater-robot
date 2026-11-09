@@ -17,6 +17,8 @@
   <arg name="use_dvl" default="false"/>
   <arg name="odom_source" default="mavros"/>
   <arg name="dvl_ip" default="192.168.1.95"/>
+  <arg name="dvl_mode" default="dvl_fused"/>
+  <arg name="dvl_odom_rate" default="20.0"/>
 
   <!-- ==================== 基础飞控链路 ==================== -->
   <!-- 启动 MAVROS 与飞控通信链路。 -->
@@ -46,20 +48,19 @@
   </node>
 
   <!-- ==================== DVL 里程计节点（可选） ==================== -->
-  <!-- use_dvl: 启动 DVL 驱动，发布 /dvl/odom（20 Hz）、/dvl/velocity、
+  <!-- use_dvl: 启动 DVL 驱动，发布 /dvl/odom（由 dvl_mode 选择，默认 20 Hz）、/dvl/velocity、
        /dvl/altitude 等话题（默认 false，不影响原有链路）。
        odom_source: 定位/TF 来源 — mavros（默认：map→base_link 由飞控 EKF
        经 tf_baselink_map_node 提供）| dvl（odom→base_link 由 DVL 广播，
        mavros TF 关闭，RViz 切换为 odom 固定帧；隐含启动 DVL 节点）。
        首次连上 DVL 后自动 reset_dead_reckoning 一次，从原点重新建立坐标系。 -->
-  <node if="$(eval arg('use_dvl') or arg('odom_source') == 'dvl')"
-        name="dvl_odometry_node" pkg="dvl_odometry" type="dvl_odometry_node.py" output="screen">
-    <param name="ip" value="$(arg dvl_ip)"/>
-    <param name="port" value="16171"/>
-    <param name="reset_on_start" value="true"/>
-    <param name="odom_rate" value="20.0"/>
-    <param name="publish_tf" value="$(eval arg('odom_source') == 'dvl')"/>
-  </node>
+  <include if="$(eval arg('use_dvl') or arg('odom_source') == 'dvl')"
+           file="$(find dvl_odometry)/launch/dvl_odometry.launch">
+    <arg name="mode" value="$(arg dvl_mode)"/>
+    <arg name="ip" value="$(arg dvl_ip)"/>
+    <arg name="odom_rate" value="$(arg dvl_odom_rate)"/>
+    <arg name="publish_tf" value="$(eval arg('odom_source') == 'dvl')"/>
+  </include>
 
   <!-- ==================== 预留节点 ==================== -->
   <!-- 这里保留了动态目标与旧版跟踪节点的启动位置，当前默认不启用。 -->

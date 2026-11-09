@@ -1,0 +1,33 @@
+# State: x y z roll pitch yaw vx vy vz wx wy wz ax ay az.
+# No DVL position/attitude is fused: it shares measurements with DVL velocity.
+frequency: 20.0
+sensor_timeout: 0.1
+two_d_mode: false
+publish_tf: false
+publish_acceleration: false
+print_diagnostics: true
+predict_to_current_time: true
+reset_on_time_jump: true
+use_control: false
+world_frame: odom
+odom_frame: odom
+base_link_frame: base_link
+imu0: /dvl/ekf/imu
+imu0_config: [false, false, false,
+              true, true, true,
+              false, false, false,
+              true, true, true,
+              true, true, true]
+imu0_differential: false
+imu0_relative: false
+imu0_remove_gravitational_acceleration: true
+imu0_queue_size: 100
+imu0_nodelay: true
+twist0: /dvl/ekf/velocity
+twist0_config: [false, false, false,
+                false, false, false,
+                true, true, true,
+                false, false, false,
+                false, false, false]
+twist0_queue_size: 30
+twist0_nodelay: true

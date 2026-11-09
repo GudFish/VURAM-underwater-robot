@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+from setuptools import setup
+from catkin_pkg.python_setup import generate_distutils_setup
 
-from setuptools import find_packages, setup
-
-setup(
-    name='dvl_odometry',
-    version='0.0.0',
-    packages=find_packages('scripts'),
-    package_dir={'': 'scripts'},
-)
+setup(**generate_distutils_setup(packages=['dvl_odometry'], package_dir={'': 'src'}))

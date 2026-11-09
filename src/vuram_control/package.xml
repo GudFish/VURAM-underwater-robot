@@ -81,6 +81,8 @@
   <exec_depend>rviz</exec_depend>
 
 
+  <exec_depend>dvl_odometry</exec_depend>
+
   <!-- The export tag contains other, unspecified, tags -->
   <export>
     <!-- Other tools can request additional information be placed here -->

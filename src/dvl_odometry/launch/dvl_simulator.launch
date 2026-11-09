@@ -1,23 +1,28 @@
 <?xml version="1.0"?>
 <launch>
-  <!-- ====================================================================
-   dvl_simulator.launch
-   Water Linked DVL A50 TCP JSON 模拟器（无硬件联调用）。
-
-   用法示例：
-     roslaunch dvl_odometry dvl_simulator.launch
-     roslaunch dvl_odometry dvl_odometry.launch ip:=127.0.0.1 publish_tf:=true
-
-   测试钩子：向模拟器发送 {"command":"sim_dropout"} 可主动断连，验证驱动节点
-   的重连逻辑（可经驱动节点再发一条非阻塞命令，或用 netcat/nc 直连 16171 发送）。
-  ==================================================================== -->
-
+  <!-- Shared deterministic trajectory; IMU includes gravity. Angles/rates use radians. -->
   <arg name="ip" default="127.0.0.1"/>
   <arg name="port" default="16171"/>
   <arg name="velocity_rate" default="10.0"/>
   <arg name="dr_rate" default="5.0"/>
-
-  <node name="dvl_simulator" pkg="dvl_odometry" type="dvl_simulator.py" output="screen"
-        args="--host $(arg ip) --port $(arg port)
-              --velocity-rate $(arg velocity_rate) --dr-rate $(arg dr_rate)"/>
+  <arg name="publish_imu" default="false"/>
+  <arg name="imu_rate" default="100.0"/>
+  <arg name="speed" default="0.3"/>
+  <arg name="acceleration" default="0.0"/>
+  <arg name="yaw_rate" default="0.1"/>
+  <arg name="roll" default="0.0"/>
+  <arg name="pitch" default="0.0"/>
+  <node name="dvl_simulator" pkg="dvl_odometry" type="mavros_imu_simulator.py" output="screen" required="true">
+    <param name="ip" value="$(arg ip)"/>
+    <param name="port" value="$(arg port)"/>
+    <param name="velocity_rate" value="$(arg velocity_rate)"/>
+    <param name="dr_rate" value="$(arg dr_rate)"/>
+    <param name="publish_imu" value="$(arg publish_imu)"/>
+    <param name="imu_rate" value="$(arg imu_rate)"/>
+    <param name="speed" value="$(arg speed)"/>
+    <param name="acceleration" value="$(arg acceleration)"/>
+    <param name="yaw_rate" value="$(arg yaw_rate)"/>
+    <param name="roll" value="$(arg roll)"/>
+    <param name="pitch" value="$(arg pitch)"/>
+  </node>
 </launch>
