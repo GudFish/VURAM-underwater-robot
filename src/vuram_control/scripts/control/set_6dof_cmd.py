@@ -41,6 +41,7 @@ RC_CHANNELS_OVERRIDE 原样发送给飞控，由 ArduSub 的 MANUAL 模式混控
 订阅 ~cmd_topic        std_msgs/Float64MultiArray   6 通道 PWM (us, 1100~1900, 1500 中立)
 服务 ~enable           std_srvs/SetBool             使能/急停（禁用时持续发中立值）
 发布 ~cmd_out_topic    std_msgs/Float64MultiArray   实际输出 PWM 回显（调试/记录）
+发布 ~enabled_topic    std_msgs/Bool                锁存的桥接使能状态（采集门控）
 发布 ~ready_topic      std_msgs/Bool（latch）       飞控参数配置完成后的就绪信号
 
 安全
@@ -94,7 +95,7 @@ class SixDofCmdNode:
 
         # ---- ROS 参数 ----
         self.cmd_topic = rospy.get_param('~cmd_topic', '/dof_cmd')
-        self.cmd_out_topic = rospy.get_param('~cmd_out_topic', '/dof_cmd/out')
+        self.cmd_out_topic = rospy.get_param('~cmd_out_topic', self.cmd_topic + '/out')
         self.num_channels = int(rospy.get_param('~num_channels', 6))
         # RC 通道 PWM 参数（与飞控 RCx_TRIM/MIN/MAX 一致）
         self.neutral_pwm = float(rospy.get_param('~neutral_pwm', 1500.0))
@@ -150,10 +151,13 @@ class SixDofCmdNode:
         self.cmd_sub = rospy.Subscriber(self.cmd_topic, Float64MultiArray, self.cmd_cb)
         self.cmd_out_pub = rospy.Publisher(self.cmd_out_topic, Float64MultiArray, queue_size=1)
         self.override_pub = rospy.Publisher(self.override_topic, OverrideRCIn, queue_size=1)
+        self.enabled_topic = rospy.get_param('~enabled_topic', self.cmd_topic + '/enabled')
+        self.enabled_pub = rospy.Publisher(self.enabled_topic, Bool, queue_size=1, latch=True)
+        self.enabled_pub.publish(Bool(data=self.enabled))
         self.enable_srv = rospy.Service('~enable', SetBool, self.enable_cb)
         # 就绪信号（latch）：上层策略节点等此信号后才开始下发指令；
         # 必须在阻塞等待之前创建，订阅方在等待期间即可收到
-        self.ready_topic = rospy.get_param('~ready_topic', '/dof_cmd/ready')
+        self.ready_topic = rospy.get_param('~ready_topic', self.cmd_topic + '/ready')
         self.ready_pub = rospy.Publisher(self.ready_topic, Bool, queue_size=1,
                                          latch=True)
 
@@ -479,6 +483,7 @@ class SixDofCmdNode:
         输出：SetBoolResponse，恒为 success=True。
         """
         self.enabled = req.data
+        self.enabled_pub.publish(Bool(data=self.enabled))
         if self.enabled:
             rospy.loginfo("Output enabled")
         else:

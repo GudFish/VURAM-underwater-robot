@@ -4,7 +4,7 @@ import hashlib
 import json
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
@@ -111,6 +111,23 @@ def test_snapshot_uses_body_coordinates(tmp_path, spec):
     np.testing.assert_allclose(action, np.tanh(obs[:5]), atol=1e-7)
 
 
+def test_policy_warmup_covers_all_history_lengths_in_multiple_passes():
+    inference = object.__new__(PolicyInference)
+    inference.history_shape = (20, 18)
+    inference.step = Mock(return_value=np.zeros(5))
+    inference.warmup()
+    assert [call.args[2] for call in inference.step.call_args_list] == list(range(21)) * 3
+    for call in inference.step.call_args_list:
+        assert call.args[0].shape == (21,)
+        assert call.args[1].shape == (20, 18)
+
+
+@pytest.mark.parametrize('threads', [0, -1, 1.5, True])
+def test_policy_rejects_invalid_thread_budget(threads, tmp_path):
+    with pytest.raises(ValueError, match='positive integer'):
+        PolicyInference(str(tmp_path), num_threads=threads)
+
+
 def test_missing_manifest_is_rejected(tmp_path):
     snapshot(tmp_path)
     (tmp_path / 'spec.json').unlink()
@@ -185,3 +202,17 @@ def test_odometry_twist_is_rotated_only_when_world_flag_set(world):
                                atol=1e-12)
     np.testing.assert_allclose(state[3:6], [0., -.2, 0.] if world else [.2, 0., 0.],
                                atol=1e-12)
+
+
+def test_odometry_health_is_fed_by_callbacks_instead_of_control_snapshot_reads():
+    msg = Odometry()
+    msg.pose.pose.orientation.w = 1.
+    observer = []
+    with patch('vuram_policy.policy_inference.rospy.Subscriber'):
+        pose = PoseState('/test/odom', on_sample=lambda stamp, received: observer.append((stamp, received)))
+    pose._cb(msg)
+    pose.step()
+    pose.step()
+    assert len(observer) == 1
+    assert observer[0][0] == 0.
+    assert observer[0][1] == pose.step()['received_monotonic']

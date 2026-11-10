@@ -5,3 +5,4 @@ pymap3d
 scipy
 torch
 pyyaml
+h5py

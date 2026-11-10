@@ -4,9 +4,9 @@ The exported module (deploy.pt) has signature
 forward(obs[21], history[20,18], valid) -> a[5] — a deterministic FiLM
 policy conditioned on a GRU history encoder (latent z = 0 until `valid`
 reaches the encoder context length). Obs and encoder normalization are
-folded into the module; raw physical units go in. Deploy only: no
-episodes, no domain randomization, no HDF5, no termination pruning, no
-CSV logging.
+folded into the module; raw physical units go in. The collect reference mode
+adds continuous real-robot figure8 episodes, HDF5 spooling and boundary-only
+model updates. Legacy internal/external reference modes retain their loops.
 
 动作契约（VND v4）：a[5] = 归一化机体力/力矩 [X,Y,Z,K,N]（无俯仰）。
 经 ThrusterInterface.set_wrench_action 直接映射到 6DOF 通道 PWM
@@ -17,6 +17,7 @@ set_6dof_cmd 链路，飞控 VECTORED 混控器完成推进器分配）。
 import hashlib
 import json
 import os
+import time
 
 import numpy as np
 import rospy
@@ -32,17 +33,28 @@ from .traj_visualizer import TrajVisualizer
 from .utils import world_to_body
 
 
+def configure_inference_threads(num_threads):
+    """Configure the CALLING thread before inference or model preparation.
+
+    With the installed OpenMP build, configuring a loader thread does not change
+    the control thread's thread budget. Both threads must call this explicitly.
+    """
+    import torch
+    if isinstance(num_threads, bool) or int(num_threads) != num_threads or num_threads < 1:
+        raise ValueError('inference_threads must be a positive integer')
+    if torch.get_num_threads() != int(num_threads):
+        torch.set_num_threads(int(num_threads))
+    return torch
+
+
 class PolicyInference(object):
-    def __init__(self, model_dir, device='cpu'):
-        # torch is imported lazily: startup stays fast and the missing-model
-        # error path never needs it
-        import torch
-        self.torch = torch
-        torch.set_num_threads(2)   # don't starve the SITL/MAVROS stack
-        self.device = torch.device(device)
-        if self.device.type == 'cuda' and not torch.cuda.is_available():
+    def __init__(self, model_dir, device='cpu', num_threads=2):
+        # torch remains lazy for reference/observation-only users.
+        self.torch = configure_inference_threads(num_threads)
+        self.device = self.torch.device(device)
+        if self.device.type == 'cuda' and not self.torch.cuda.is_available():
             rospy.logwarn('CUDA unavailable; using CPU for policy inference')
-            self.device = torch.device('cpu')
+            self.device = self.torch.device('cpu')
         self.model_dir = os.path.abspath(os.path.expanduser(model_dir))
         self.model = None
         self.version = None
@@ -111,6 +123,18 @@ class PolicyInference(object):
         """Build body-relative observations in both reference loops."""
         return build_obs(state, reference, previous, layout)
 
+    def warmup(self):
+        """Exercise empty, partial and full history before a model is eligible.
+
+        Several passes also let TorchScript finish profiling/optimization away
+        from the control loop. Every prepared snapshot follows the same path.
+        """
+        obs = np.zeros(21, np.float32)
+        history = np.zeros(self.history_shape, np.float32)
+        for _ in range(3):
+            for valid in range(self.history_shape[0] + 1):
+                self.step(obs, history, valid)
+
     def step(self, obs, history, valid):
         """obs[21], history[20,18] (raw), valid int -> a[5]."""
         t = self.torch
@@ -133,20 +157,27 @@ class PoseState(object):
     转到机体系（Gazebo pose_gt 场景）。
     """
 
-    def __init__(self, odom_topic, twist_in_world=False):
+    def __init__(self, odom_topic, twist_in_world=False, on_sample=None):
         self.twist_in_world = twist_in_world
+        self.on_sample = on_sample
         self.pose_msg = None
+        self._snapshot = None
         self.sub = rospy.Subscriber(odom_topic, Odometry, self._cb,
                                     queue_size=5)
 
     def _cb(self, msg):
+        received = time.monotonic()
+        if self.on_sample is not None:
+            self.on_sample(msg.header.stamp.to_sec(), received)
+        self._snapshot = (msg, received)
         self.pose_msg = msg
 
     def step(self):
         """Snapshot at the control tick; None until the first pose arrives."""
-        if self.pose_msg is None:
+        snapshot = self._snapshot
+        if snapshot is None:
             return None
-        pm = self.pose_msg
+        pm, received = snapshot
         pos = np.array([pm.pose.pose.position.x,
                         pm.pose.pose.position.y,
                         pm.pose.pose.position.z])
@@ -162,7 +193,7 @@ class PoseState(object):
             v = world_to_body(v, q_wxyz)
             w = world_to_body(w, q_wxyz)
         return {'state': np.concatenate([v, w, q_wxyz, pos]),
-                'time': pm.header.stamp.to_sec()}
+                'time': pm.header.stamp.to_sec(), 'received_monotonic': received}
 
 
 def _history_tensor(history, context_len, history_dim):
@@ -184,18 +215,24 @@ def run_policy_node(model_dir, spec_path, ref_family='',
 
     参考来源（~ref_source）：'internal' = 本节点随机生成轨迹（固定时长
     episode）；'external' = 订阅 ~ref_topic 上由外部节点（如 vuram_planning
-    goal_planner）发布的参考 Odometry，无限运行至关机。
+    goal_planner）发布的参考 Odometry；'collect' = 水平 figure8 连续实机
+    采集，每圈导出 H5 并采用已准备好的最新策略。
     """
     spec = load_spec(spec_path)
     odom_topic = rospy.get_param('~odom_topic', '/mavros/local_position/odom')
     twist_in_world = rospy.get_param('~twist_in_world', False)
-    # 参考来源：internal | external（非法值直接退出）
+    # Collection is dispatched before the legacy single-snapshot loader.
     ref_source = rospy.get_param('~ref_source', 'internal')
+    if ref_source == 'collect':
+        from .collection_node import run_collection_node
+        run_collection_node(model_dir, spec, episode_len_s)
+        return
     ref_topic = rospy.get_param('~ref_topic', '/planning/reference_odom')
     if ref_source not in ('internal', 'external'):
-        rospy.logfatal('bad ~ref_source %r (expected internal|external)',
+        rospy.logfatal('bad ~ref_source %r (expected internal|external|collect)',
                        ref_source)
         return
+    model_dir = model_dir or os.path.join(os.path.dirname(__file__), 'models', 'policy_v000012')
     # ref_seed < 0: a fresh random trajectory on every run
     ref_seed = rospy.get_param('~ref_seed', -1)
     if ref_seed < 0:

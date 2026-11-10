@@ -11,6 +11,8 @@
 
 # for SITL boundary with user define location
 # sim_vehicle.py -v ArduSub -l 31.284730,121.211700,0,0 --console
+# --mavproxy-args="--streamrate=-1"
+# set streamrate -1
 gps_points:
   - [31.284650, 121.211400]
   - [31.284650, 121.211800]

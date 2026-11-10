@@ -1,117 +1,108 @@
 <?xml version="1.0"?>
 <launch>
-  <!-- ====================================================================
-   policy_deploy.launch
-   MuJoCo 训练策略在 ArduSub 栈上的部署入口：apm（MAVROS）+ 逐推进器直控
-   （set_6dof_cmd，VECTORED 帧 6DOF 通道 + RC override，保留 arm 门控）
-   + 20 Hz 策略闭环 + 可选 RViz 轨迹叠加显示。
-
-   链路：/mavros/local_position/odom → obs[21]+history → deploy.pt → a[5] →
-        PWM(1100~1900) → /dof_cmd → set_6dof_cmd（RC override）→
-        6DOF 通道（pitch/roll/throttle/yaw/forward/lateral）→
-        VECTORED 混控器 → MOTOR1~6
-   仅支持机体系观测编码；策略将位置误差与参考线速度旋转到
-        当前机体系，历史仍输入原始 [state13, action5]。
-   通道映射（thruster_interface.py）：[X,Y,Z,K,N] →
-        [forward,lateral,throttle,roll,yaw]，Y/N 取反，pitch 中立。
-
-   注意：
-   - 启动门控顺序：推进器桥接就绪（/dof_cmd/ready）→ MAVROS 参数表下载
-     完成（/mavros/param/pull）→ 生成参考轨迹 → 20 Hz 闭环下发控制。
-   - arm 门控与 failsafe 保留：未解锁无输出；节点死掉后
-     override 过期（RC_OVERRIDE_TIME=3s）+ FS_PILOT_INPUT=2 自动 disarm。
-   - setup_fc 首次运行需为 true：设置 SYSID_MYGCS=1、SERVO1~6_FUNCTION
-     =33~38、FRAME_CONFIG=7、ACRO_YAW_P=4.5（yaw 1:1）。FRAME_CONFIG 首次
-     从其他构型切到 7 后需重启飞控才生效（之后持久化，可设 false）。
-   - 与 AUV_ctrl_thruster.launch（DO_SET_SERVO 直控）互斥：切换时由两个
-     脚本各自的参数配置恢复所需状态。
-   - 参考轨迹深度带默认 -5..0（SITL 水面）；按实际运行深度覆盖
-     ref_z_min/ref_z_max。
-   ==================================================================== -->
-
-  <!-- ==================== 飞控连接参数 ==================== -->
+  <!-- Continuous real-robot collection: one horizontal figure8 per H5.
+       latest.json is prepared in the background; model swaps occur only at
+       lap boundaries. The fixed reference is anchored once AFTER arming.
+       setup_fc configures VECTORED (FRAME_CONFIG=1), never CUSTOM bypass.
+       Control remains gated by bridge ready/enabled + connected/armed/MANUAL.
+       Run run_train.py in phase=online separately against the same data root. -->
   <arg name="fcu_url" default="udp://127.0.0.1:14551@14555"/>
-
-  <!-- ==================== 推进器直控参数（VECTORED 帧 6DOF 通道） ==================== -->
-  <!-- setup_fc: 启动时自动配置飞控参数（SYSID_MYGCS/SERVOx_FUNCTION/
-       FRAME_CONFIG=7/ACRO_YAW_P）。 -->
   <arg name="setup_fc" default="false"/>
-  <!-- arm_vehicle: 启动后自动解锁（默认关闭，建议手动解锁确认链路后再按需开启） -->
   <arg name="arm_vehicle" default="false"/>
 
-  <!-- ==================== 策略与参考轨迹参数 ==================== -->
-  <arg name="model_dir" default="$(find vuram_control)/scripts/vuram_policy/models/policy_v000012"/>
+  <!-- Empty model_dir follows model_root/latest.json. A nonempty directory
+       pins one immutable deploy.pt + spec.json and disables hot updates. -->
+  <arg name="learning_root" default="$(env HOME)/mujoco_auv_env"/>
+  <arg name="model_root" default="$(arg learning_root)/data/vnd/models"/>
+  <arg name="data_dir" default="$(arg learning_root)/data/vnd/inbox"/>
+  <arg name="model_dir" default=""/>
   <arg name="spec" default="$(find vuram_control)/config/obs_act.yaml"/>
-  <!-- ref_family: '' = 随机；line | lissajous | waypoints_dp -->
-  <arg name="ref_family" default=""/>
-  <!-- ref_seed: -1 = 每次运行随机新轨迹；固定值可复现同一轨迹 -->
-  <arg name="ref_seed" default="-1"/>
-  <arg name="episode_len_s" default="60.0"/>
-  <!-- device: 策略推理设备 — cpu（默认）| cuda。
-       cuda 不可用时脚本自动回退 cpu 并告警。 -->
   <arg name="device" default="cpu"/>
-  <!-- wait_ready: 等待推进器桥接节点完成飞控参数配置并发布就绪信号后再开始
-       生成参考轨迹与下发控制（SITL 首次参数表下载可达数十秒）。 -->
-  <arg name="wait_ready" default="true"/>
-  <arg name="ready_topic" default="/dof_cmd/ready"/>
-  <!-- wait_param_list: 等待 MAVROS 参数表下载完成（PR: parameters list
-       received）后再开始生成轨迹。参数下载期间的参数洪流会挤占 RC override
-       转发链路造成控制中断（实测 ~30 s 乱飘），下载完成后控制链路才稳定。 -->
-  <arg name="wait_param_list" default="true"/>
-  <arg name="param_pull_service" default="/mavros/param/pull"/>
-  <!-- 参考轨迹深度带（世界 ENU，m），默认 MuJoCo 训练深度带 -->
-  <arg name="ref_z_min" default="-5"/>
-  <arg name="ref_z_max" default="-0"/>
+  <!-- Small batch-one actors use one CPU thread to leave CPU time for SITL,
+       MAVROS and the watchdog. Model preparation uses the same thread budget. -->
+  <arg name="inference_threads" default="1"/>
 
-  <!-- ==================== 话题与显示开关 ==================== -->
-  <arg name="odom_topic" default="/mavros/local_position/odom"/>
-  <!-- 默认 twist 为机体系 FLU；世界系 twist（如 pose_gt）置 true。 -->
-  <arg name="twist_in_world" default="false"/>
+  <!-- T rounds to whole control intervals. V is the PEAK horizontal speed.
+       Ax=V*T/(2*pi*sqrt(1+4*ratio^2)); Ay=ratio*Ax. No end-of-lap braking.
+       World depth and initial tangent come from the actual starting pose. -->
+  <arg name="episode_len_s" default="20.0"/>
+  <arg name="ref_speed" default="1.0"/>
+  <arg name="figure8_ratio" default="0.4"/>
+
   <arg name="dof_cmd_topic" default="/dof_cmd"/>
+  <arg name="ready_topic" default="$(arg dof_cmd_topic)/ready"/>
+  <arg name="enabled_topic" default="$(arg dof_cmd_topic)/enabled"/>
+  <arg name="state_topic" default="/mavros/state"/>
+  <arg name="wait_ready" default="true"/>
+  <arg name="wait_param_list" default="true"/>
+  <!-- MAVROS may need multiple per-call waits to finish its initial download. -->
+  <arg name="param_wait_timeout" default="180.0"/>
+  <arg name="param_pull_service" default="/mavros/param/pull"/>
+  <arg name="odom_topic" default="/mavros/local_position/odom"/>
+  <!-- Configure FC telemetry after parameter synchronization, then verify the
+       actual callback rates before starting. Other odometry sources manage
+       their own rates and skip MAVROS rate/IMU setup by default. -->
+  <arg name="configure_mavros_rates" default="$(eval arg('odom_topic').endswith('/local_position/odom'))"/>
+  <arg name="message_interval_service" default="/mavros/set_message_interval"/>
+  <arg name="mavros_telemetry_rate" default="30.0"/>
+  <arg name="imu_topic" default="/mavros/imu/data"/>
+  <arg name="odom_ready_window" default="1.0"/>
+  <arg name="odom_timeout" default="0.2"/>
+  <!-- MAVROS/DVL twist is body FLU by default; world-frame sources use true. -->
+  <arg name="twist_in_world" default="false"/>
+  <arg name="viz_frame_id" default="map"/>
   <arg name="enable_viz" default="true"/>
   <arg name="enable_rviz" default="true"/>
 
-  <!-- ==================== 基础飞控链路 ==================== -->
   <include file="$(find vuram_control)/launch/apm.launch">
     <arg name="fcu_url" value="$(arg fcu_url)"/>
   </include>
 
-  <!-- ==================== 推进器直控节点（VECTORED 帧 6DOF 通道 + RC override） ==================== -->
   <node name="set_6dof_cmd" pkg="vuram_control" type="set_6dof_cmd.py" output="screen">
     <param name="setup_fc_params" type="bool" value="$(arg setup_fc)"/>
     <param name="frame_config" type="int" value="1"/>
     <param name="acro_yaw_p" type="double" value="4.5"/>
     <param name="arm_vehicle" type="bool" value="$(arg arm_vehicle)"/>
+    <param name="mode" value="MANUAL"/>
+    <param name="cmd_topic" value="$(arg dof_cmd_topic)"/>
+    <param name="cmd_out_topic" value="$(arg dof_cmd_topic)/out"/>
+    <param name="state_topic" value="$(arg state_topic)"/>
     <param name="ready_topic" value="$(arg ready_topic)"/>
+    <param name="enabled_topic" value="$(arg enabled_topic)"/>
   </node>
 
-  <!-- ==================== 策略推理节点 ==================== -->
   <node name="policy_inference" pkg="vuram_control" type="policy_inference_node.py"
         output="screen" required="true"
-        args="--model_dir $(arg model_dir)
-              --spec $(arg spec)
-              --ref_family=$(arg ref_family)
-              --episode_len_s $(arg episode_len_s)">
-    <param name="ref_seed" value="$(arg ref_seed)"/>
-    <!-- 显式 internal：防止同参数服务器上先前以 external 模式运行过的
-         /policy_inference 私有参数被继承（roscore 跨 launch 复用时会残留） -->
-    <param name="ref_source" value="internal"/>
+        args="--spec &quot;$(arg spec)&quot; --episode_len_s $(arg episode_len_s)">
+    <param name="ref_source" value="collect"/>
+    <param name="learning_root" value="$(arg learning_root)"/>
+    <param name="model_root" value="$(arg model_root)"/>
+    <param name="data_dir" value="$(arg data_dir)"/>
+    <param name="model_dir" type="str" value="$(arg model_dir)"/>
     <param name="device" value="$(arg device)"/>
+    <param name="inference_threads" value="$(arg inference_threads)"/>
+    <param name="ref_speed" value="$(arg ref_speed)"/>
+    <param name="figure8_ratio" value="$(arg figure8_ratio)"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
+    <param name="configure_mavros_rates" value="$(arg configure_mavros_rates)"/>
+    <param name="message_interval_service" value="$(arg message_interval_service)"/>
+    <param name="mavros_telemetry_rate" value="$(arg mavros_telemetry_rate)"/>
+    <param name="imu_topic" value="$(arg imu_topic)"/>
+    <param name="odom_ready_window" value="$(arg odom_ready_window)"/>
+    <param name="odom_timeout" value="$(arg odom_timeout)"/>
     <param name="twist_in_world" value="$(arg twist_in_world)"/>
     <param name="cmd_topic" value="$(arg dof_cmd_topic)"/>
-    <param name="ref_z_min" value="$(arg ref_z_min)"/>
-    <param name="ref_z_max" value="$(arg ref_z_max)"/>
-    <param name="viz" value="$(arg enable_viz)"/>
-    <param name="wait_ready" value="$(arg wait_ready)"/>
+    <param name="state_topic" value="$(arg state_topic)"/>
     <param name="ready_topic" value="$(arg ready_topic)"/>
+    <param name="enabled_topic" value="$(arg enabled_topic)"/>
+    <param name="wait_ready" value="$(arg wait_ready)"/>
     <param name="wait_param_list" value="$(arg wait_param_list)"/>
+    <param name="param_wait_timeout" value="$(arg param_wait_timeout)"/>
     <param name="param_pull_service" value="$(arg param_pull_service)"/>
+    <param name="viz" value="$(arg enable_viz)"/>
+    <param name="viz_frame_id" value="$(arg viz_frame_id)"/>
   </node>
 
-  <!-- ==================== RViz 可视化 ==================== -->
-  <!-- 使用专用配置（config/policy_eval_ardusub.rviz，mavros 定位源/固定帧 map）：
-       机器人模型 + 策略参考/实际轨迹叠加显示，不动默认的 ardusub_display.rviz。 -->
   <include if="$(arg enable_rviz)" file="$(find vuram_control)/launch/rviz.launch">
     <arg name="display_config" value="$(find vuram_control)/config/policy_eval_ardusub.rviz"/>
   </include>
