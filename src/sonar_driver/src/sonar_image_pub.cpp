@@ -11,6 +11,9 @@
 #include "sonar_image_pub.h"
 
 #include <ros/package.h>
+#include <std_msgs/String.h>
+#include <sstream>
+#include <iomanip>
 
 #include <QCoreApplication>
 #include <QString>
@@ -45,6 +48,7 @@ SonarImagePublisher::SonarImagePublisher(QObject* parent)
 
     it_ = new image_transport::ImageTransport(nh_);
     image_pub_ = it_->advertise(image_topic_, 1);
+    metadata_pub_ = nh_.advertise<std_msgs::String>("/forward_sonar/metadata", 1, true);
 
     // Pre-allocate reusable Image message header
     img_msg_ = boost::make_shared<sensor_msgs::Image>();
@@ -444,6 +448,17 @@ void SonarImagePublisher::onNewReturnFire(BufferEntry* pEntry)
     std::vector<uchar> imgBuffer(expectedSize);
     memcpy(imgBuffer.data(), pEntry->pImage, expectedSize);
 
+    // Copy metadata under the same lock as the pixels. The SDK ring buffer can
+    // replace pBrgs/rfm as soon as we unlock it.
+    std::vector<short> bearings;
+    if (pEntry->pBrgs) bearings.assign(pEntry->pBrgs, pEntry->pBrgs + nBeams);
+    const double rangeResolution = pEntry->simple ? pEntry->rfm.rangeResolution : pEntry->rfm2.rangeResolution;
+    const double actualFrequency = pEntry->simple ? pEntry->rfm.frequency : pEntry->rfm2.frequency;
+    const double actualSoundSpeed = pEntry->simple ? pEntry->rfm.speeedOfSoundUsed : pEntry->rfm2.speeedOfSoundUsed;
+    const uint32_t pingId = pEntry->simple ? pEntry->rfm.pingId : pEntry->rfm2.pingId;
+    const double actualGain = pEntry->simple ? pEntry->rfm.fireMessage.gainPercent : pEntry->rfm2.fireMessage.gainPercent;
+    const int actualGamma = pEntry->simple ? pEntry->rfm.fireMessage.gammaCorrection : pEntry->rfm2.fireMessage.gammaCorrection;
+
     locker.unlock();  // Done with the shared buffer entry
 
     // --- Build OpenCV Mat wrapping the copied buffer ---
@@ -470,6 +485,7 @@ void SonarImagePublisher::onNewReturnFire(BufferEntry* pEntry)
     // --- Build and publish ROS Image message ---
     cv_bridge::CvImage cv_img;
     cv_img.header.stamp    = ros::Time::now();
+    cv_img.header.seq      = pingId;
     cv_img.header.frame_id = frame_id_;
     cv_img.encoding        = sensor_msgs::image_encodings::MONO8;
     cv_img.image           = img;
@@ -477,24 +493,37 @@ void SonarImagePublisher::onNewReturnFire(BufferEntry* pEntry)
     image_pub_.publish(cv_img.toImageMsg());
 
     // --- Build Cartesian map & publish transformed image ---
-    double rangeResolution = 0.0;
-    short* pBrgs = pEntry->pBrgs;  // bearing array (0.01 deg, nBeams entries)
-    if (pEntry->simple) {
-        rangeResolution = pEntry->rfm.rangeResolution;
-    } else {
-        rangeResolution = pEntry->rfm2.rangeResolution;
-    }
-
-    if (pBrgs && nBeams > 0 && rangeResolution > 0.0) {
+    if (!bearings.empty() && nBeams > 0 && rangeResolution > 0.0) {
         // Rebuild map if sonar config changed
         if (!cart_map_ready_ ||
             nBeams != static_cast<uint16_t>(last_nbeams_) ||
             nRanges != last_nranges_ ||
-            std::abs(rangeResolution - last_range_res_) > 1e-6) {
-            buildCartesianMap(nRanges, nBeams, pBrgs, rangeResolution, range_);
+            std::abs(rangeResolution - last_range_res_) > 1e-6 || bearings != last_bearings_) {
+            buildCartesianMap(nRanges, nBeams, bearings.data(), rangeResolution, range_);
+            last_bearings_ = bearings;
         }
-        publishCartesian(img);
+        publishCartesian(img, cv_img.header);
     }
+
+    std::ostringstream metadata;
+    metadata << std::setprecision(12)
+             << "{\"version\":1,\"backend\":\"device\",\"device\":\"BHQ-750D\",\"ping_id\":" << pingId
+             << ",\"n_beams\":" << nBeams << ",\"n_ranges\":" << nRanges
+             << ",\"stamp_sec\":" << cv_img.header.stamp.toSec()
+             << ",\"range_resolution_m\":" << rangeResolution << ",\"range_m\":" << range_
+             << ",\"min_range_m\":" << output_min_range_
+             << ",\"cartesian_fov_deg\":" << (bearings.empty() ? 130.0 : (bearings.back() - bearings.front()) / 100.0)
+             << ",\"frequency_hz\":" << actualFrequency << ",\"speed_of_sound_mps\":" << actualSoundSpeed
+             << ",\"gain_percent\":" << actualGain << ",\"gamma_byte\":" << actualGamma
+             << ",\"gain_assist\":" << (gain_assist_ ? "true" : "false")
+             << ",\"flip_horizontal\":" << (flip_horizontal_ ? "true" : "false")
+             << ",\"flip_vertical\":" << (flip_vertical_ ? "true" : "false") << ",\"beam_angles_deg\":[";
+    for (size_t b = 0; b < bearings.size(); ++b) {
+        if (b) metadata << ',';
+        metadata << bearings[b] / 100.0;
+    }
+    metadata << "]}";
+    std_msgs::String metadataMsg; metadataMsg.data = metadata.str(); metadata_pub_.publish(metadataMsg);
 
     // --- Send next fire command to keep sonar alive ---
     sendFireCommand();
@@ -606,6 +635,11 @@ void SonarImagePublisher::buildCartesianMap(uint16_t nRanges, uint16_t nBeams,
             // Convert Cartesian → polar
             double rng = std::hypot(forward, lateral);
             double bearingDeg = std::atan2(lateral, forward) * 180.0 / M_PI;
+            if (rng > maxRange || rng < minRange) {
+                cart_map_x_.at<float>(row, col) = -1.0f;
+                cart_map_y_.at<float>(row, col) = -1.0f;
+                continue;
+            }
 
             // Map bearing to beam index
             // pBrgs is in 0.01 deg units, find the nearest beam
@@ -646,7 +680,7 @@ void SonarImagePublisher::buildCartesianMap(uint16_t nRanges, uint16_t nBeams,
     ROS_INFO("SonarImagePublisher: Cartesian map ready");
 }
 
-void SonarImagePublisher::publishCartesian(const cv::Mat& rawImage)
+void SonarImagePublisher::publishCartesian(const cv::Mat& rawImage, const std_msgs::Header& header)
 {
     if (!cart_map_ready_) return;
     if (cart_map_x_.empty() || cart_map_y_.empty()) return;
@@ -659,8 +693,7 @@ void SonarImagePublisher::publishCartesian(const cv::Mat& rawImage)
 
     // --- Build and publish ROS Image message ---
     cv_bridge::CvImage cv_img;
-    cv_img.header.stamp    = ros::Time::now();
-    cv_img.header.frame_id = frame_id_;
+    cv_img.header = header;
     cv_img.encoding        = sensor_msgs::image_encodings::MONO8;
     cv_img.image           = cartesian;
 

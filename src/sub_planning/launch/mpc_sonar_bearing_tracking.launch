@@ -1,5 +1,7 @@
 <?xml version="1.0"?>
 <launch>
+  <arg name="sonar_backend" default="raytrace"/>
+  <arg name="sonar_multipath" default="false"/>
   <!-- ==================== 传感器与显示开关 ==================== -->
   <!-- 这一组参数控制前视声呐仿真、原始窗口和调试窗口是否启用。 -->
   <arg name="forward_sonar" default="true"/>
@@ -22,6 +24,8 @@
   <include file="$(find sub_planning)/launch/acoustic_tdoa_chain.launch"/>
   <include file="$(find sub_planning)/launch/target_belief_viz.launch"/>
   <include if="$(arg forward_sonar)" file="$(find fls_detector)/launch/forward_sonar_sim.launch">
+    <arg name="backend" value="$(arg sonar_backend)"/>
+    <arg name="multipath" value="$(arg sonar_multipath)"/>
     <arg name="show_window" value="$(arg forward_sonar_window)"/>
   </include>
 

@@ -452,7 +452,7 @@
               /mavros/setpoint_raw/local /mavros/setpoint_raw/attitude
               /forward_sonar/measurement /forward_sonar/candidates
               /forward_sonar/scene_candidates /forward_sonar/obstacles
-              /forward_sonar/detection_debug
+              /forward_sonar/detection_debug /forward_sonar/metadata /forward_sonar/render_stats
               /planner/solver_time /planner/alpha /planner/recovery_status
               /tf /tf_static
               /boundary_loader/plan_visualization /boundary_loader/sim_visualization

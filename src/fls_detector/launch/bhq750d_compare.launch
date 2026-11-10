@@ -1,0 +1,23 @@
+<launch>
+  <arg name="max_range" default="10.0"/>
+  <arg name="backend" default="raytrace"/>
+  <!-- Match the historical 10 m experiment's native 494 x 256 grid. -->
+  <arg name="config_overlay" default="$(eval find('fls_detector') + '/config/bhq750d_historical_256.yaml' if float(arg('max_range')) == 10.0 else '')"/>
+  <!-- Background only; distance-based profile works with every selected range. -->
+  <arg name="noise_profile" default="$(find fls_detector)/config/bhq750d_noise_experiment_10m.yaml"/>
+  <arg name="show_window" default="true"/>
+  <arg name="multipath" default="false"/>
+  <arg name="random_seed" default="7"/>
+  <include file="$(find fls_detector)/launch/forward_sonar_sim.launch">
+    <arg name="max_range" value="$(arg max_range)"/>
+    <arg name="backend" value="$(arg backend)"/>
+    <arg name="config_overlay" value="$(arg config_overlay)"/>
+    <arg name="noise_profile" value="$(arg noise_profile)"/>
+    <arg name="show_window" value="$(arg show_window)"/>
+    <arg name="multipath" value="$(arg multipath)"/>
+    <arg name="random_seed" value="$(arg random_seed)"/>
+  </include>
+  <include file="$(find fls_detector)/launch/sonar_target_detector.launch">
+    <arg name="max_range" value="$(arg max_range)"/>
+  </include>
+</launch>

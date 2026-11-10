@@ -88,6 +88,7 @@
     <param name="region_threshold_percentile" value="93.0"/>
     <param name="region_min_threshold" value="40.0"/>
     <param name="region_min_blob_area" value="40"/>
+    <param name="region_morphology_size" value="3"/>
     <param name="region_max_blob_area" value="600"/>
     <param name="region_max_range" value="25.0"/>
     <param name="region_near_gain" value="1.0"/>

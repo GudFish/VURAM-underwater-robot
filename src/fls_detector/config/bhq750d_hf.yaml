@@ -1,0 +1,42 @@
+# Nominal parameters, NOT a calibrated acoustic transfer function.
+mode: 2
+max_range: 10.0
+min_range: 0.2
+fov_deg: 130.0
+vertical_fov_deg: 20.0
+num_beams: 512
+num_range_bins: 0                 # derive from range_resolution
+range_resolution: 0.02            # grid spacing, NOT the 2.5 mm physical resolution
+image_width: 512
+image_height: 256
+elevation_samples: 32
+max_rays_per_beam: 512
+refinement_depth: 5
+threads: 4
+sensor_xyz: [0.0, 0.0, 0.0]
+sensor_rpy_deg: [0.0, 0.0, 0.0]    # uncalibrated installation
+speed_of_sound: 1510.0
+source_power: 100000000.0          # relative units; calibrate with fixed gain
+absorption_db_per_m: 0.4          # initial approximation, water/frequency dependent
+tvg_db_per_decade: 20.0
+horizontal_edge_gain: 0.6
+vertical_edge_gain: 0.5
+noise_floor_power: 1.0
+noise_rayleigh_db: 1.5
+noise_correlation: 0.35
+display_min_db: 0.0
+display_max_db: 75.0
+gain_db: 0.0
+gamma: 150                       # SDK byte: 150/255; 0/255 mean 1
+gain_assist: false                # fixed transfer for calibration
+gain_assist_alpha: 0.05
+publish_ground_truth: true
+floor: {enabled: false}
+water_surface: {enabled: false}
+walls: []                        # physical boxes, independent of planning boundary
+materials:
+  target: {diffuse: 0.6, specular: 0.1, specular_exponent: 30.0, backscatter: 1.0}
+  obstacle: {diffuse: 0.6, specular: 0.08, backscatter: 1.0}
+  floor: {diffuse: 0.5, specular: 0.2, specular_exponent: 40.0, backscatter: 1.0}
+  water_surface: {diffuse: 0.01, specular: 0.95, specular_exponent: 100.0, backscatter: 0.0}
+  wall: {diffuse: 0.4, specular: 0.3, specular_exponent: 40.0, backscatter: 1.0}

@@ -1,5 +1,11 @@
 <?xml version="1.0"?>
 <launch>
+  <arg name="sonar_backend" default="raytrace"/>
+  <arg name="sonar_multipath" default="false"/>
+  <!-- One geometry for rendering, detection, planning, and metrics. -->
+  <arg name="sonar_range" default="15.0"/>
+  <arg name="sonar_min_range" default="0.2"/>
+  <arg name="sonar_fov_deg" default="130.0"/>
   <!-- ====================================================================
    target_tracking_simulation.launch
    统一仿真实验入口：通过 method 参数切换不同跟踪方法。
@@ -88,6 +94,11 @@
   <!-- ==================== 5. 前视声呐仿真 ==================== -->
   <!-- b1_bearing_only 不启用声呐通道（无声呐感知、无声呐融合）。 -->
   <include if="$(eval arg('forward_sonar') and arg('method') != 'b1_bearing_only')" file="$(find fls_detector)/launch/forward_sonar_sim.launch">
+    <arg name="backend" value="$(arg sonar_backend)"/>
+    <arg name="multipath" value="$(arg sonar_multipath)"/>
+    <arg name="max_range" value="$(arg sonar_range)"/>
+    <arg name="min_range" value="$(arg sonar_min_range)"/>
+    <arg name="fov_deg" value="$(arg sonar_fov_deg)"/>
     <arg name="show_window" value="$(arg forward_sonar_window)"/>
     <arg name="random_seed" value="$(arg random_seed)"/>
   </include>
@@ -96,6 +107,9 @@
   <include file="$(find fls_detector)/launch/sonar_target_detector.launch">
     <arg name="enabled" value="$(eval arg('forward_sonar') and arg('method') != 'b1_bearing_only')"/>
     <arg name="debug_window" value="$(arg forward_sonar_debug_window)"/>
+    <arg name="max_range" value="$(arg sonar_range)"/>
+    <arg name="min_range" value="$(arg sonar_min_range)"/>
+    <arg name="fov_deg" value="$(arg sonar_fov_deg)"/>
   </include>
 
   <!-- ==================== 7. EKF 目标估计（可复用 launch，所有方法共用） ==================== -->
@@ -168,9 +182,9 @@
     <param name="w_dyaw" value="0.4"/>
     <param name="w_cte" value="2.5"/>
     <param name="w_obstacle" value="10.0"/>
-    <param name="sonar_fov_deg" value="130.0"/>
-    <param name="sonar_min_range" value="0.2"/>
-    <param name="sonar_max_range" value="30.0"/>
+    <param name="sonar_fov_deg" value="$(arg sonar_fov_deg)"/>
+    <param name="sonar_min_range" value="$(arg sonar_min_range)"/>
+    <param name="sonar_max_range" value="$(arg sonar_range)"/>
     <param name="w_sonar_fov" value="8.0"/>
     <param name="w_sonar_range" value="2.0"/>
     <param name="w_sonar_center" value="1.5"/>
@@ -259,9 +273,9 @@
     <param name="w_cte" value="2.5"/>
     <param name="w_obstacle" value="10.0"/>
     <!-- 声呐 FOV 软约束保留（仅作为运动学几何参考，无实际声呐量测） -->
-    <param name="sonar_fov_deg" value="130.0"/>
-    <param name="sonar_min_range" value="0.2"/>
-    <param name="sonar_max_range" value="30.0"/>
+    <param name="sonar_fov_deg" value="$(arg sonar_fov_deg)"/>
+    <param name="sonar_min_range" value="$(arg sonar_min_range)"/>
+    <param name="sonar_max_range" value="$(arg sonar_range)"/>
     <param name="w_sonar_fov" value="8.0"/>
     <param name="w_sonar_range" value="2.0"/>
     <param name="w_sonar_center" value="1.5"/>
@@ -338,9 +352,9 @@
     <param name="w_dyaw" value="0.4"/>
     <param name="w_cte" value="2.5"/>
     <param name="w_obstacle" value="10.0"/>
-    <param name="sonar_fov_deg" value="130.0"/>
-    <param name="sonar_min_range" value="0.2"/>
-    <param name="sonar_max_range" value="30.0"/>
+    <param name="sonar_fov_deg" value="$(arg sonar_fov_deg)"/>
+    <param name="sonar_min_range" value="$(arg sonar_min_range)"/>
+    <param name="sonar_max_range" value="$(arg sonar_range)"/>
     <param name="w_sonar_fov" value="8.0"/>
     <param name="w_sonar_range" value="2.0"/>
     <param name="w_sonar_center" value="1.5"/>
@@ -356,6 +370,9 @@
     <arg name="method" value="$(arg method)"/>
     <arg name="random_seed" value="$(arg random_seed)"/>
     <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="sonar_max_range" value="$(arg sonar_range)"/>
+    <arg name="sonar_min_range" value="$(arg sonar_min_range)"/>
+    <arg name="sonar_fov_deg" value="$(arg sonar_fov_deg)"/>
   </include>
 
   <!-- ====================================================================

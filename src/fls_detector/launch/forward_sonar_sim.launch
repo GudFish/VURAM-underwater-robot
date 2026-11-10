@@ -1,42 +1,56 @@
 <?xml version="1.0"?>
 <launch>
-  <!-- ==================== 随机种子参数 ==================== -->
-  <!-- 非负整数种子用于场景复现；-1 表示不锁定随机序列。 -->
+  <arg name="backend" default="raytrace"/>
+  <arg name="_checked_backend" value="$(eval {'raytrace': True, 'legacy': True}[arg('backend')])"/>
+  <arg name="config_file" default="$(find fls_detector)/config/bhq750d_hf.yaml"/>
+  <arg name="max_range" default="15.0"/>
+  <!-- Fixed historical geometry is only for 10 m; noise uses its own metre axis. -->
+  <arg name="config_overlay" default="$(eval find('fls_detector') + '/config/bhq750d_historical_256.yaml' if float(arg('max_range')) == 10.0 else '')"/>
+  <arg name="noise_profile" default="$(find fls_detector)/config/bhq750d_noise_experiment_10m.yaml"/>
   <arg name="random_seed" default="-1"/>
-
-  <!-- ==================== 话题与显示开关参数 ==================== -->
-  <!-- 这一组参数定义声呐仿真输入输出话题，并控制可视化节点是否启动。 -->
   <arg name="robot_odom_topic" default="/mavros/local_position/odom"/>
   <arg name="target_pose_topic" default="/dynamic_target/pose"/>
   <arg name="image_topic" default="/forward_sonar/image"/>
+  <arg name="raw_image_topic" default="/forward_sonar/image_raw"/>
   <arg name="marker_topic" default="/forward_sonar/markers"/>
   <arg name="obstacle_marker_topic" default="/dynamic_obstacles/markers"/>
   <arg name="enable_obstacle_echoes" default="true"/>
   <arg name="show_range" default="true"/>
   <arg name="show_window" default="true"/>
-
-  <!-- ==================== 目标模型参数 ==================== -->
-  <!-- 这一组参数控制目标网格资源和网格尺度。 -->
   <arg name="target_mesh_resource" default="package://vuram_description/meshes/AUV.STL"/>
   <arg name="target_mesh_scale" default="1.0"/>
-
-  <!-- ==================== 前视声呐仿真节点 ==================== -->
-  <!-- 这一组参数用于生成前视声呐图像、目标回波、障碍物回波和边界回波。 -->
-  <node name="forward_sonar_sim" pkg="fls_detector" type="forward_sonar_sim.py" output="screen">
+  <arg name="min_range" default="0.2"/>
+  <arg name="fov_deg" default="130.0"/>
+  <arg name="publish_rate" default="10.0"/>
+  <arg name="multipath" default="false"/>
+  <rosparam command="load" file="$(arg config_file)" ns="forward_sonar_sim"/>
+  <rosparam if="$(eval arg('config_overlay') != '')" command="load" file="$(arg config_overlay)" ns="forward_sonar_sim"/>
+  <rosparam if="$(eval arg('noise_profile') != '')" command="load" file="$(arg noise_profile)" ns="forward_sonar_sim"/>
+  <param name="forward_sonar_sim/random_seed" value="$(arg random_seed)"/>
+  <param name="forward_sonar_sim/robot_odom_topic" value="$(arg robot_odom_topic)"/>
+  <param name="forward_sonar_sim/target_pose_topic" value="$(arg target_pose_topic)"/>
+  <param name="forward_sonar_sim/obstacle_marker_topic" value="$(arg obstacle_marker_topic)"/>
+  <param name="forward_sonar_sim/enable_obstacle_echoes" value="$(arg enable_obstacle_echoes)"/>
+  <param name="forward_sonar_sim/image_topic" value="$(arg image_topic)"/>
+  <param name="forward_sonar_sim/target_mesh_resource" value="$(arg target_mesh_resource)"/>
+  <param name="forward_sonar_sim/target_mesh_scale" value="$(arg target_mesh_scale)"/>
+  <param name="forward_sonar_sim/publish_rate" value="$(arg publish_rate)"/>
+  <param name="forward_sonar_sim/fov_deg" value="$(arg fov_deg)"/>
+  <param name="forward_sonar_sim/max_range" value="$(arg max_range)"/>
+  <param name="forward_sonar_sim/min_range" value="$(arg min_range)"/>
+  <param name="forward_sonar_sim/raw_image_topic" value="$(arg raw_image_topic)"/>
+  <param name="forward_sonar_sim/multipath" value="$(arg multipath)"/>
+  <param name="/forward_sonar/geometry/fov_deg" value="$(arg fov_deg)"/>
+  <param name="/forward_sonar/geometry/max_range" value="$(arg max_range)"/>
+  <param name="/forward_sonar/geometry/min_range" value="$(arg min_range)"/>
+  <node if="$(eval arg('backend') == 'raytrace')" name="forward_sonar_sim" pkg="fls_detector" type="forward_sonar_raytrace_node" output="screen" required="true" clear_params="true"/>
+  <node if="$(eval arg('backend') == 'legacy')" name="forward_sonar_sim" pkg="fls_detector" type="forward_sonar_sim.py" output="screen" clear_params="true">
     <!-- 随机种子参数：控制声呐图像噪声与回波采样的随机性。 -->
-    <param name="random_seed" value="$(arg random_seed)"/>
 
     <!-- 话题映射参数：连接机器人、目标、障碍物与图像输出接口。 -->
-    <param name="robot_odom_topic" value="$(arg robot_odom_topic)"/>
-    <param name="target_pose_topic" value="$(arg target_pose_topic)"/>
-    <param name="obstacle_marker_topic" value="$(arg obstacle_marker_topic)"/>
-    <param name="enable_obstacle_echoes" value="$(arg enable_obstacle_echoes)"/>
-    <param name="image_topic" value="$(arg image_topic)"/>
 
     <!-- 目标网格回波参数：配置目标模型类型、采样密度与阴影效果。 -->
     <param name="target_model" value="mesh"/>
-    <param name="target_mesh_resource" value="$(arg target_mesh_resource)"/>
-    <param name="target_mesh_scale" value="$(arg target_mesh_scale)"/>
     <param name="target_mesh_sample_count" value="6000"/>
     <param name="target_mesh_point_radius" value="0.045"/>
     <param name="target_mesh_normal_power" value="1.7"/>
@@ -57,12 +71,6 @@
     <param name="range_ring_spacing" value="5.0"/>
 
     <!-- 声呐几何参数：定义发布频率、扇区视场和图像分辨率。 -->
-    <param name="publish_rate" value="10.0"/>
-    <param name="fov_deg" value="130.0"/>
-    <param name="max_range" value="30.0"/>
-    <param name="min_range" value="0.2"/>
-    <param name="image_width" value="512"/>
-    <param name="image_height" value="256"/>
 
     <!-- 边界回波参数：配置是否使用场地边界以及读取的边界参数路径。 -->
     <param name="use_boundary" value="false"/>
@@ -77,9 +85,10 @@
     <param name="marker_topic" value="$(arg marker_topic)"/>
 
     <!-- 量程可视化参数：控制显示频率、视场角和最远量程。 -->
-    <param name="publish_rate" value="10.0"/>
-    <param name="fov_deg" value="130.0"/>
-    <param name="max_range" value="30.0"/>
+    <param name="publish_rate" value="$(arg publish_rate)"/>
+    <param name="fov_deg" value="$(arg fov_deg)"/>
+    <param name="max_range" value="$(arg max_range)"/>
+    <param name="min_range" value="$(arg min_range)"/>
   </node>
 
   <!-- ==================== 图像显示节点 ==================== -->

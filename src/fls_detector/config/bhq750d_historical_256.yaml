@@ -1,0 +1,5 @@
+# Historical 10 m bag shape. SDK bearings/rangeResolution were not recorded;
+# this uniform grid is an approximation, not recovered device calibration.
+num_beams: 256
+num_range_bins: 494
+range_resolution: 0.02028397565922921

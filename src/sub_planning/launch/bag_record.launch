@@ -22,7 +22,7 @@
   <arg name="record_images" default="true"/>
 
   <!-- 图像话题（大体积，可选关闭） -->
-  <arg name="image_topics" value="$(eval '/forward_sonar/image /forward_sonar/debug_image' if arg('record_images') else '')"/>
+  <arg name="image_topics" value="$(eval '/forward_sonar/image_raw /forward_sonar/image /forward_sonar/debug_image' if arg('record_images') else '')"/>
 
   <node name="rosbag_record" pkg="rosbag" type="record" output="screen"
         args="--lz4 -O $(arg bag_dir)/$(arg method)_seed$(arg random_seed)_$(anon ts).bag
@@ -31,7 +31,7 @@
               /target_acoustic_tdoa /target_acoustic_bearing
               /forward_sonar/measurement /forward_sonar/candidates
               /forward_sonar/scene_candidates /forward_sonar/obstacles
-              /forward_sonar/detection_debug
+              /forward_sonar/detection_debug /forward_sonar/metadata /forward_sonar/render_stats
               /target_estimate/pose /target_estimate/twist
               /target_estimate/belief /target_estimate/pdaf_debug
               /target_velocity_xy /target_yaw

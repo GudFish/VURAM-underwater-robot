@@ -1,0 +1,3 @@
+# Overlay: mode selects 1 degree angular / 4 mm range response.
+mode: 1
+absorption_db_per_m: 0.2

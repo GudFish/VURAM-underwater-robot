@@ -51,7 +51,7 @@ private:
     void buildCartesianMap(uint16_t nRanges, uint16_t nBeams,
                            const short* pBrgs, double rangeResolution,
                            double maxRange);
-    void publishCartesian(const cv::Mat& rawImage);
+    void publishCartesian(const cv::Mat& rawImage, const std_msgs::Header& header);
 
     // ---- ROS ----
     ros::NodeHandle              nh_;
@@ -59,6 +59,8 @@ private:
     image_transport::ImageTransport* it_;
     image_transport::Publisher   image_pub_;
     image_transport::Publisher   cartesian_pub_;
+    ros::Publisher              metadata_pub_;
+    std::vector<short>          last_bearings_;
 
     // ---- SDK components ----
     ClientCtrl*    sonar_client_;

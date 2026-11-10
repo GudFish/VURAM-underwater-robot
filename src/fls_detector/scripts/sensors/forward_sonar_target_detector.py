@@ -7,11 +7,16 @@
 输出：发布仿真量测、候选目标或图像数据，并维护传感器内部缓存。
 """
 import math
+import json
 
 import numpy as np
 import rospy
 from sensor_msgs.msg import Image
-from std_msgs.msg import Float32, Float32MultiArray
+from std_msgs.msg import Float32, Float32MultiArray, String
+try:
+    from sensors.sonar_geometry import cartesian_mask
+except ImportError:
+    from sonar_geometry import cartesian_mask
 
 try:
     import cv2
@@ -92,6 +97,7 @@ class ForwardSonarTargetDetector:
         self.region_min_blob_area = int(rospy.get_param('~region_min_blob_area', 300))
         self.region_max_blob_area = int(rospy.get_param('~region_max_blob_area', 3000))
         self.region_max_range = float(rospy.get_param('~region_max_range', 25.0))
+        self.region_morphology_size = int(rospy.get_param('~region_morphology_size', 3))
         self.region_near_gain = float(rospy.get_param('~region_near_gain', 1.0))
 
         self.kernel = np.ones((3, 3), dtype=np.uint8)
@@ -105,6 +111,7 @@ class ForwardSonarTargetDetector:
 
         self.bearing_sub = rospy.Subscriber(self.bearing_topic, Float32, self.bearing_cb, queue_size=10)
         self.image_sub = rospy.Subscriber(self.image_topic, Image, self.image_cb, queue_size=1)
+        self.metadata_sub = rospy.Subscriber('/forward_sonar/metadata', String, self.metadata_cb, queue_size=1)
         self.measurement_pub = rospy.Publisher(self.measurement_topic, Float32MultiArray, queue_size=10)
         self.candidate_pub = rospy.Publisher(self.candidate_topic, Float32MultiArray, queue_size=10)
         self.scene_candidate_pub = rospy.Publisher(self.scene_candidate_topic, Float32MultiArray, queue_size=10)
@@ -120,6 +127,22 @@ class ForwardSonarTargetDetector:
             self.scene_candidate_topic,
             self.debug_image_topic,
         )
+
+    def metadata_cb(self, msg):
+        """Use the native acquisition geometry instead of treating image width as beams."""
+        try:
+            data = json.loads(msg.data)
+            angles = data['beam_angles_deg']
+            maximum = float(data['range_m'])
+            minimum = float(data.get('min_range_m', self.min_range))
+            fov = float(data.get('cartesian_fov_deg', max(angles) - min(angles)))
+            if (len(angles) < 2 or not np.all(np.isfinite(angles))
+                    or not np.isfinite(maximum + minimum + fov)
+                    or maximum <= minimum or minimum < 0 or not 0 < fov < 180):
+                raise ValueError('invalid sonar geometry')
+            self.max_range, self.min_range, self.fov_deg = maximum, minimum, fov
+        except (ValueError, TypeError, KeyError):
+            rospy.logwarn_throttle(3.0, '[ForwardSonarDetector] ignoring invalid sonar metadata')
 
     @staticmethod
     def wrap_pi(angle):
@@ -304,7 +327,8 @@ class ForwardSonarTargetDetector:
         )
         binary = np.zeros_like(blurred, dtype=np.uint8)
         binary[(blurred >= threshold) & footprint_mask] = 255
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        size = max(1, int(getattr(self, 'region_morphology_size', 3))) | 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
         binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
         binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
 
@@ -855,11 +879,7 @@ class ForwardSonarTargetDetector:
         输入：`height`、`width` 为该函数执行所需的输入参数。
         输出：返回布尔值或状态判定结果。
         """
-        forward = np.linspace(self.max_range, self.min_range, height, dtype=np.float32)[:, None]
-        max_lateral = self.max_lateral_span()
-        lateral = np.linspace(max_lateral, -max_lateral, width, dtype=np.float32)[None, :]
-        half_fov = math.radians(self.fov_deg) * 0.5
-        return np.abs(lateral) <= forward * math.tan(half_fov)
+        return cartesian_mask(height, width, self.min_range, self.max_range, self.fov_deg)
 
     def max_lateral_span(self):
         """

@@ -18,6 +18,10 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Image
 from visualization_msgs.msg import Marker, MarkerArray
+try:
+    from sensors.sonar_geometry import cartesian_mask
+except ImportError:
+    from sonar_geometry import cartesian_mask
 
 
 class ForwardSonarSim:
@@ -366,12 +370,8 @@ class ForwardSonarSim:
         输入：无显式输入参数；主要依赖对象当前状态、成员配置或全局上下文。
         输出：返回与该功能对应的计算结果。
         """
-        forward = self.forward_ranges_by_row()[:, None]
-        max_lateral = self.max_lateral_span()
-        lateral = np.linspace(max_lateral, -max_lateral, self.image_width)[None, :]
-        half_fov = math.radians(self.fov_deg) * 0.5
-        mask = np.abs(lateral) <= forward * math.tan(half_fov)
-        return np.where(mask, 1.0, 0.08)
+        return cartesian_mask(self.image_height, self.image_width, self.min_range,
+                              self.max_range, self.fov_deg).astype(float)
 
     def forward_ranges_by_row(self):
         """
@@ -857,6 +857,7 @@ class ForwardSonarSim:
             high = float(np.percentile(output, np.clip(self.output_gain_percentile, 50.0, 100.0)))
             high = max(high, self.output_min_high)
             output = output * (255.0 / high)
+        output *= self.sonar_footprint_mask()
         return np.ascontiguousarray(np.clip(output, 0, 255).astype(np.uint8))
 
     def timer_cb(self, _event):

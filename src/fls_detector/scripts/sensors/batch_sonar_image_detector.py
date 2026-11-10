@@ -121,6 +121,7 @@ def _install_ros_stubs():
     std_msgs_msg = types.ModuleType('std_msgs.msg')
     std_msgs_msg.Float32 = _DummyMsg
     std_msgs_msg.Float32MultiArray = _DummyMsg
+    std_msgs_msg.String = _DummyMsg
     std_msgs.msg = std_msgs_msg
 
     sys.modules['rospy'] = rospy_stub
