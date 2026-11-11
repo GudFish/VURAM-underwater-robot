@@ -5,7 +5,7 @@ build_obs() 与训练侧（auv_learning/task/specification.py）一致，
 """
 import numpy as np
 
-from .utils import load_yaml, quat_error_rotvec, world_to_body
+from utils.math3d import load_yaml, quat_error_rotvec, world_to_body
 
 OBSERVATION_ENCODING = 'body_relative_tracking_v1'
 

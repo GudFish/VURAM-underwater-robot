@@ -8,7 +8,8 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool
 from std_srvs.srv import Trigger, TriggerResponse
 
-from .core import UNKNOWN_VARIANCE, DvlPredictor, RateLimiter
+from .angular_velocity import AngularVelocityEstimator
+from .core import UNKNOWN_VARIANCE, DvlPredictor, RateLimiter, rotation
 from .ros_support import Diagnostics, OdomOutput, positive_param
 
 
@@ -21,6 +22,15 @@ class DvlEstimator:
         self.predictor = DvlPredictor(positive_param('vel_timeout', 1.),
                                       positive_param('dr_timeout', 1.),
                                       positive_param('cov_growth_pos', 0.01, allow_zero=True))
+        self.angular = (AngularVelocityEstimator(
+            timeout=min(positive_param('angular_timeout', self.predictor.dr_timeout),
+                        self.predictor.dr_timeout),
+            filter_tau=positive_param('angular_filter_tau', .2, allow_zero=True),
+            max_rate=positive_param('angular_max_rate', 3.)) if fused else None)
+        self.angular_valid_pub = (rospy.Publisher('/dvl/angular_velocity_valid', Bool,
+                                                  queue_size=10, latch=True) if fused else None)
+        if self.angular_valid_pub is not None:
+            self.angular_valid_pub.publish(False)
         self.limiter = RateLimiter(self.rate if fused and self.rate <= 5 else 0.)
         self.resetting = False
         self.ignore_before = 0.
@@ -51,6 +61,7 @@ class DvlEstimator:
             self.resetting = message.data
             if message.data:
                 self.predictor.clear()
+                self.clear_angular()
                 self.ignore_before = rospy.Time.now().to_sec()
                 self.limiter.last = None
 
@@ -61,6 +72,7 @@ class DvlEstimator:
                 self.vel_invalid_at = self.dr_invalid_at = now
                 self.predictor.invalidate_velocity(now)
                 self.predictor.invalidate_dr(now)
+                self.clear_angular()
 
     def velocity_validity(self, message):
         if not message.data:
@@ -73,6 +85,12 @@ class DvlEstimator:
             with self.lock:
                 self.dr_invalid_at = rospy.Time.now().to_sec()
                 self.predictor.invalidate_dr(self.dr_invalid_at)
+                self.clear_angular()
+
+    def clear_angular(self):
+        if self.angular is not None:
+            self.angular.reset()
+            self.angular_valid_pub.publish(False)
 
     def velocity(self, message):
         with self.lock:
@@ -90,6 +108,13 @@ class DvlEstimator:
                 return
             p, q = message.pose.pose.position, message.pose.pose.orientation
             self.predictor.anchor(stamp, [p.x, p.y, p.z], [q.x, q.y, q.z, q.w], message.pose.covariance)
+            if self.angular is not None:
+                # Pose covariance uses fixed world rotation axes; the rate
+                # estimator differentiates body-frame rotation perturbations.
+                rot = rotation([q.x, q.y, q.z, q.w])
+                cov = np.asarray(message.pose.covariance).reshape(6, 6)[3:, 3:]
+                valid = self.angular.update(stamp, [q.x, q.y, q.z, q.w], rot.T.dot(cov).dot(rot))
+                self.angular_valid_pub.publish(valid)
             if not self.fused or self.rate <= 5:
                 if self.limiter.allow(stamp):
                     self.publish(message.header.stamp, predict=False)
@@ -101,6 +126,7 @@ class DvlEstimator:
             now = rospy.Time.now()
             if now.to_sec() < self.predictor.time:
                 self.predictor.clear()
+                self.clear_angular()
                 return
             self.predictor.advance(now.to_sec())
             self.publish(now, predict=True)
@@ -123,6 +149,15 @@ class DvlEstimator:
             (message.twist.twist.linear.x, message.twist.twist.linear.y,
              message.twist.twist.linear.z) = state.velocity
             twist_cov[:3, :3] = state.vel_cov
+        if self.angular is not None:
+            omega, cov, angular_valid = self.angular.estimate(stamp.to_sec())
+            angular_valid = (angular_valid and state.dr_valid and
+                             0 <= stamp.to_sec()-state.dr_stamp <= state.dr_timeout)
+            if angular_valid:
+                (message.twist.twist.angular.x, message.twist.twist.angular.y,
+                 message.twist.twist.angular.z) = omega
+                twist_cov[3:, 3:] = cov
+            self.angular_valid_pub.publish(angular_valid)
         message.twist.covariance = twist_cov.ravel().tolist()
         self.output.publish(message)
 
@@ -136,8 +171,17 @@ class DvlEstimator:
                 level, text = 1, 'DVL pose stale/invalid; holding predicted position'
             elif self.fused and not state.velocity_fresh(now):
                 level, text = 1, 'velocity stale/invalid; no extrapolation, DR corrections remain active'
+            elif self.angular is not None and not self.angular.estimate(now)[2]:
+                level, text = 1, 'angular velocity estimate unavailable; waiting for consecutive DR attitudes'
             else:
                 level, text = 0, 'DR anchor + bounded velocity prediction' if self.fused else 'device DR measurements'
             self.diagnostics.send(level, text, output_hz=self.rate if self.fused else 'device (~5)',
                                   prediction_frames=self.fused and self.rate > 5,
-                                  vel_age_s=now-state.vel_stamp if state.vel_stamp is not None else 'none')
+                                  vel_age_s=now-state.vel_stamp if state.vel_stamp is not None else 'none',
+                                  angular_velocity_source=('DR quaternion difference, body FLU, filtered'
+                                                           if self.fused else 'unavailable'),
+                                  angular_velocity_valid=(self.angular.estimate(now)[2]
+                                                          if self.angular is not None else False),
+                                  angular_age_s=(now-self.angular.stamp
+                                                 if self.angular is not None and self.angular.stamp is not None
+                                                 else 'none'))

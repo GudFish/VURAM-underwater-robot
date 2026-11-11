@@ -14,10 +14,11 @@ from nav_msgs.msg import Odometry
 PACKAGE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE / 'scripts'))
 
-from vuram_policy.policy_inference import PolicyInference, PoseState, _history_tensor
-from vuram_policy.spec import (OBSERVATION_ENCODING,
-                               build_obs, build_ref11, load_spec)
-from vuram_policy.utils import quat_mul, quat_to_R, yaw_quat
+from vuram_policy.policy_inference import PolicyInference, _history_tensor
+from control.state import PoseState
+from control.observation import (OBSERVATION_ENCODING,
+                                 build_obs, build_ref11, load_spec)
+from utils.math3d import quat_mul, quat_to_R, yaw_quat
 
 
 @pytest.fixture
@@ -194,7 +195,7 @@ def test_odometry_twist_is_rotated_only_when_world_flag_set(world):
     msg.pose.pose.orientation.w, msg.pose.pose.orientation.z = q[0], q[3]
     msg.twist.twist.linear.x = .4
     msg.twist.twist.angular.x = .2
-    with patch('vuram_policy.policy_inference.rospy.Subscriber'):
+    with patch('control.state.rospy.Subscriber'):
         pose = PoseState('/test/odom', twist_in_world=world)
     pose._cb(msg)
     state = pose.step()['state']
@@ -208,7 +209,7 @@ def test_odometry_health_is_fed_by_callbacks_instead_of_control_snapshot_reads()
     msg = Odometry()
     msg.pose.pose.orientation.w = 1.
     observer = []
-    with patch('vuram_policy.policy_inference.rospy.Subscriber'):
+    with patch('control.state.rospy.Subscriber'):
         pose = PoseState('/test/odom', on_sample=lambda stamp, received: observer.append((stamp, received)))
     pose._cb(msg)
     pose.step()

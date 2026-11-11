@@ -9,16 +9,38 @@
   <arg name="fcu_url" default="udp://127.0.0.1:14551@14555"/>
 
   <arg name="setup_fc" default="false"/>
+  <arg name="arm_vehicle" default="false"/>
+  <arg name="frame_config" default="-1"/>
+  <arg name="acro_yaw_p" default="-1.0"/>
+  <arg name="dof_cmd_topic" default="/dof_cmd"/>
+  <arg name="ready_topic" default="$(arg dof_cmd_topic)/ready"/>
+  <arg name="enabled_topic" default="$(arg dof_cmd_topic)/enabled"/>
+  <arg name="state_topic" default="/mavros/state"/>
+  <arg name="start_boundary" default="true"/>
 
   <!-- ==================== DVL 定位参数 ==================== -->
   <!-- use_dvl: 启动 DVL 驱动节点并发布 /dvl/odom 等话题（默认 false）。
        odom_source: 定位/TF 来源 — mavros（默认）| dvl（DVL 定位接管 TF 树）。
        dvl_ip: DVL A50 静态 IP。 -->
   <arg name="use_dvl" default="false"/>
+  <arg name="start_dvl" default="true"/>
   <arg name="odom_source" default="mavros"/>
   <arg name="dvl_ip" default="192.168.1.95"/>
   <arg name="dvl_mode" default="dvl_fused"/>
   <arg name="dvl_odom_rate" default="20.0"/>
+  <arg name="dvl_timeout" default="1.0"/>
+  <arg name="odom_topic" default="$(eval {'mavros': '/mavros/local_position/odom', 'dvl': '/dvl/odom'}[arg('odom_source')])"/>
+  <arg name="imu_topic" default="/mavros/imu/data"/>
+  <arg name="viz_frame_id" default="$(eval {'mavros': 'map', 'dvl': 'odom'}[arg('odom_source')])"/>
+
+  <!-- Shared FC telemetry setup; controller nodes only verify actual rates. -->
+  <arg name="configure_mavros_rates" default="$(eval arg('odom_topic').endswith('/local_position/odom') or ((arg('use_dvl') or arg('odom_source') == 'dvl') and arg('dvl_mode') == 'mavros_fused'))"/>
+  <arg name="mavros_telemetry_rate" default="20.0"/>
+  <arg name="message_interval_service" default="/mavros/set_message_interval"/>
+  <arg name="wait_ready" default="true"/>
+  <arg name="wait_param_list" default="true"/>
+  <arg name="param_wait_timeout" default="180.0"/>
+  <arg name="param_pull_service" default="/mavros/param/pull"/>
 
   <!-- ==================== 基础飞控链路 ==================== -->
   <!-- 启动 MAVROS 与飞控通信链路。 -->
@@ -28,7 +50,7 @@
 
   <!-- ==================== 边界加载节点 ==================== -->
   <!-- 这一组参数用于配置规划边界、仿真边界以及 RViz 边界标记的生成方式。 -->
-  <node name="boundary_loader" pkg="vuram_control" type="boundary_loader.py" output="screen">
+  <node if="$(arg start_boundary)" name="boundary_loader" pkg="vuram_control" type="boundary_loader.py" output="screen">
     <!-- 边界顶点来源：从 YAML 文件加载原始 GPS 边界点。 -->
     <rosparam command="load" file="$(find vuram_control)/config/boundary_points.yaml" />
 
@@ -54,11 +76,16 @@
        经 tf_baselink_map_node 提供）| dvl（odom→base_link 由 DVL 广播，
        mavros TF 关闭，RViz 切换为 odom 固定帧；隐含启动 DVL 节点）。
        首次连上 DVL 后自动 reset_dead_reckoning 一次，从原点重新建立坐标系。 -->
-  <include if="$(eval arg('use_dvl') or arg('odom_source') == 'dvl')"
+  <include if="$(eval arg('start_dvl') and (arg('use_dvl') or arg('odom_source') == 'dvl'))"
            file="$(find dvl_odometry)/launch/dvl_odometry.launch">
     <arg name="mode" value="$(arg dvl_mode)"/>
     <arg name="ip" value="$(arg dvl_ip)"/>
     <arg name="odom_rate" value="$(arg dvl_odom_rate)"/>
+    <arg name="odom_topic" value="$(eval arg('odom_topic') if arg('odom_source') == 'dvl' else '/dvl/odom')"/>
+    <arg name="odom_frame" value="$(eval arg('viz_frame_id') if arg('odom_source') == 'dvl' else 'odom')"/>
+    <arg name="imu_topic" value="$(arg imu_topic)"/>
+    <arg name="vel_timeout" value="$(arg dvl_timeout)"/>
+    <arg name="dr_timeout" value="$(arg dvl_timeout)"/>
     <arg name="publish_tf" value="$(eval arg('odom_source') == 'dvl')"/>
   </include>
 
@@ -75,8 +102,27 @@
        启动时自动切换 MANUAL 模式；需手动解锁后指令才生效。 -->
   <node name="set_6dof_cmd" pkg="vuram_control" type="set_6dof_cmd.py" output="screen">
     <param name="setup_fc_params" type="bool" value="$(arg setup_fc)"/>
+    <param name="frame_config" type="int" value="$(arg frame_config)"/>
+    <param name="acro_yaw_p" type="double" value="$(arg acro_yaw_p)"/>
+    <param name="arm_vehicle" type="bool" value="$(arg arm_vehicle)"/>
+    <param name="mode" value="MANUAL"/>
+    <param name="cmd_topic" value="$(arg dof_cmd_topic)"/>
+    <param name="cmd_out_topic" value="$(arg dof_cmd_topic)/out"/>
+    <param name="state_topic" value="$(arg state_topic)"/>
+    <param name="ready_topic" value="$(arg ready_topic)"/>
+    <param name="enabled_topic" value="$(arg enabled_topic)"/>
   </node>
 
+  <node if="$(arg configure_mavros_rates)" name="mavros_telemetry" pkg="vuram_control"
+        type="mavros_telemetry_node.py" output="screen">
+    <param name="mavros_telemetry_rate" value="$(arg mavros_telemetry_rate)"/>
+    <param name="message_interval_service" value="$(arg message_interval_service)"/>
+    <param name="wait_ready" value="$(arg wait_ready)"/>
+    <param name="ready_topic" value="$(arg ready_topic)"/>
+    <param name="wait_param_list" value="$(arg wait_param_list)"/>
+    <param name="param_wait_timeout" value="$(arg param_wait_timeout)"/>
+    <param name="param_pull_service" value="$(arg param_pull_service)"/>
+  </node>
 
   <!-- ==================== 可视化 ==================== -->
   <!-- 启动 RViz、模型发布和 TF 广播链路（批量实验可关闭）。 -->

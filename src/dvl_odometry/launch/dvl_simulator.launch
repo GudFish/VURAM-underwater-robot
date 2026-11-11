@@ -7,6 +7,7 @@
   <arg name="dr_rate" default="5.0"/>
   <arg name="publish_imu" default="false"/>
   <arg name="imu_rate" default="100.0"/>
+  <arg name="imu_stamp_offset" default="0.0"/>
   <arg name="speed" default="0.3"/>
   <arg name="acceleration" default="0.0"/>
   <arg name="yaw_rate" default="0.1"/>
@@ -19,6 +20,7 @@
     <param name="dr_rate" value="$(arg dr_rate)"/>
     <param name="publish_imu" value="$(arg publish_imu)"/>
     <param name="imu_rate" value="$(arg imu_rate)"/>
+    <param name="imu_stamp_offset" value="$(arg imu_stamp_offset)"/>
     <param name="speed" value="$(arg speed)"/>
     <param name="acceleration" value="$(arg acceleration)"/>
     <param name="yaw_rate" value="$(arg yaw_rate)"/>

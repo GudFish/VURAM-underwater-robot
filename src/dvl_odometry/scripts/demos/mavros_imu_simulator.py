@@ -19,6 +19,7 @@ class ImuSimulator:
         self.motion = {key: float(rospy.get_param('~'+key, value)) for key, value in
                        [('speed', 0.3), ('acceleration', 0.), ('yaw_rate', 0.1), ('roll', 0.), ('pitch', 0.)]}
         self.enabled = rospy.get_param('~publish_imu', False)
+        self.imu_stamp_offset = float(rospy.get_param('~imu_stamp_offset', 0.))
         self.publisher = rospy.Publisher('/mavros/imu/data', Imu, queue_size=30)
         self.frame = rospy.get_param('~robot_frame', 'base_link')
         self.simulator = DvlSimulator(host=rospy.get_param('~ip', '127.0.0.1'),
@@ -39,7 +40,8 @@ class ImuSimulator:
             return
         _, rpy, _, force, omega = trajectory(max(0., time.time()-self.start_time), **self.motion)
         message = Imu()
-        message.header.stamp, message.header.frame_id = rospy.Time.now(), self.frame
+        message.header.stamp = rospy.Time.now()+rospy.Duration(self.imu_stamp_offset)
+        message.header.frame_id = self.frame
         (message.orientation.x, message.orientation.y, message.orientation.z,
          message.orientation.w) = quaternion_from_euler(*rpy)
         message.linear_acceleration.x, message.linear_acceleration.y, message.linear_acceleration.z = force

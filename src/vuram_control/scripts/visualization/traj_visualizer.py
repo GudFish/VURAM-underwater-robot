@@ -75,6 +75,13 @@ class TrajVisualizer(object):
             ma.markers.append(m)
         self.pub.publish(ma)
 
+    def close(self):
+        """Release the timer and publisher when a controller exits."""
+        if self.enabled:
+            self._timer.shutdown()
+            self.pub.unregister()
+            self.enabled = False
+
     # ---- publishing ------------------------------------------------------------
     def _publish(self, _event):
         ma = MarkerArray()

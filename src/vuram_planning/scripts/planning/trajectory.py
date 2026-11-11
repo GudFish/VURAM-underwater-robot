@@ -6,7 +6,7 @@
 终点后 eval 恒返回常量（目标位姿 + 零速度 + 终点航向），实现无限期保持。
 深度 z 由调用方保持为规划时刻的当前深度（目标 z 忽略）。
 
-Hermite 数学与 vuram_control/scripts/vuram_policy/reference_generator.py
+Hermite 数学与 vuram_control/scripts/trajectory/reference_generator.py
 的 _ref_waypoints/_hermite 一致（此处复制而非跨包 import，避免依赖私有
 函数）。eval 的返回契约与 ReferenceGenerator.get_ref 一致：
 (pos[3], rpy[3], vel[3], w_z)。

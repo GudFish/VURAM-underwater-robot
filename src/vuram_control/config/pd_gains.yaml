@@ -1,0 +1,10 @@
+# Body-frame XYZ position/velocity gains: N/m and N/(m/s).
+# Defaults correspond to training warm_start's effective mass (40 kg) gains.
+# Tune for the actual vehicle; commanded wrench is normalized and saturated.
+kp_xyz: [80.0, 80.0, 60.0]
+kd_xyz: [40.0, 40.0, 32.0]
+
+# Body roll/yaw attitude/angular-velocity gains: Nm/rad and Nm/(rad/s).
+# Pitch is not an independently controlled action in the five-axis interface.
+kp_att: [2.49, 2.60]
+kd_att: [1.245, 1.30]

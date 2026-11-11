@@ -17,7 +17,6 @@ set_6dof_cmd 链路，飞控 VECTORED 混控器完成推进器分配）。
 import hashlib
 import json
 import os
-import time
 
 import numpy as np
 import rospy
@@ -25,12 +24,14 @@ from mavros_msgs.srv import ParamPull
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool
 
-from .reference_generator import ReferenceGenerator
-from .spec import (build_obs, build_ref11, get_observation_encoding, load_spec,
+from control import tracking_node
+from trajectory.reference_generator import ReferenceGenerator
+from control.observation import (build_obs, build_ref11, get_observation_encoding, load_spec,
                    obs_dim_from_layout)
-from .thruster_interface import ThrusterInterface
-from .traj_visualizer import TrajVisualizer
-from .utils import world_to_body
+from control.thruster_interface import ThrusterInterface
+from visualization.traj_visualizer import TrajVisualizer
+from control.state import PoseState
+from .model_reload import PolicyReloader
 
 
 def configure_inference_threads(num_threads):
@@ -149,53 +150,6 @@ class PolicyInference(object):
         return action
 
 
-class PoseState(object):
-    """MAVROS odometry snapshot: s[13] = [v_body6, quat_wxyz4, pos3].
-
-    /mavros/local_position/odom 与 DVL odom 的 twist 均为机体系（FLU 轴，
-    x 前 / y 左 / z 上），默认直接使用；~twist_in_world=true 时按四元数
-    转到机体系（Gazebo pose_gt 场景）。
-    """
-
-    def __init__(self, odom_topic, twist_in_world=False, on_sample=None):
-        self.twist_in_world = twist_in_world
-        self.on_sample = on_sample
-        self.pose_msg = None
-        self._snapshot = None
-        self.sub = rospy.Subscriber(odom_topic, Odometry, self._cb,
-                                    queue_size=5)
-
-    def _cb(self, msg):
-        received = time.monotonic()
-        if self.on_sample is not None:
-            self.on_sample(msg.header.stamp.to_sec(), received)
-        self._snapshot = (msg, received)
-        self.pose_msg = msg
-
-    def step(self):
-        """Snapshot at the control tick; None until the first pose arrives."""
-        snapshot = self._snapshot
-        if snapshot is None:
-            return None
-        pm, received = snapshot
-        pos = np.array([pm.pose.pose.position.x,
-                        pm.pose.pose.position.y,
-                        pm.pose.pose.position.z])
-        q = pm.pose.pose.orientation
-        q_wxyz = np.array([q.w, q.x, q.y, q.z])   # message xyzw -> state wxyz
-        v = np.array([pm.twist.twist.linear.x,
-                      pm.twist.twist.linear.y,
-                      pm.twist.twist.linear.z])
-        w = np.array([pm.twist.twist.angular.x,
-                      pm.twist.twist.angular.y,
-                      pm.twist.twist.angular.z])
-        if self.twist_in_world:
-            v = world_to_body(v, q_wxyz)
-            w = world_to_body(w, q_wxyz)
-        return {'state': np.concatenate([v, w, q_wxyz, pos]),
-                'time': pm.header.stamp.to_sec(), 'received_monotonic': received}
-
-
 def _history_tensor(history, context_len, history_dim):
     """历史行 [s13+a5] 打包为 [context_len, history_dim]，最新行在最后，
     不足部分零填充（与训练侧 demo_policy 一致）。"""
@@ -203,6 +157,30 @@ def _history_tensor(history, context_len, history_dim):
     if history:
         h[-len(history):] = history
     return h
+
+
+def run_collection_node(model_dir, spec, episode_len_s):
+    """Supply prepared policies to the shared figure8 tracking lifecycle."""
+    def source_factory(contract, model_root):
+        device = rospy.get_param('~device', 'cpu')
+        inference_threads = rospy.get_param('~inference_threads', 1)
+        # Configure this thread as well as the background preparation thread:
+        # OpenMP's thread budget belongs to the calling thread.
+        configure_inference_threads(inference_threads)
+
+        def load_policy(path):
+            policy = PolicyInference(path, device=device, num_threads=inference_threads)
+            if not policy.loaded:
+                raise ValueError('snapshot has no deploy.pt: {}'.format(path))
+            policy.validate_spec(spec)
+            contract.validate_policy(policy)
+            policy.warmup()
+            return policy
+
+        return PolicyReloader(model_root, load_policy, rospy.get_param('~model_dir', model_dir),
+                              warn=lambda msg: rospy.logwarn_throttle(5., msg))
+
+    return tracking_node.run_tracking_node(spec, episode_len_s, source_factory)
 
 
 def run_policy_node(model_dir, spec_path, ref_family='',
@@ -224,7 +202,6 @@ def run_policy_node(model_dir, spec_path, ref_family='',
     # Collection is dispatched before the legacy single-snapshot loader.
     ref_source = rospy.get_param('~ref_source', 'internal')
     if ref_source == 'collect':
-        from .collection_node import run_collection_node
         run_collection_node(model_dir, spec, episode_len_s)
         return
     ref_topic = rospy.get_param('~ref_topic', '/planning/reference_odom')

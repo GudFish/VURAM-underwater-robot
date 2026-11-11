@@ -26,6 +26,7 @@ class MavrosDvlFusion:
         self.lock = threading.RLock()
         self.output = OdomOutput()
         self.imu_timeout = positive_param('imu_timeout', 0.5)
+        self.imu_future_tolerance = positive_param('imu_future_tolerance', 0.02, allow_zero=True)
         self.vel_timeout = positive_param('vel_timeout', 1.)
         self.imu = self.velocity = self.last_output = None
         self.vel_valid = False
@@ -47,8 +48,15 @@ class MavrosDvlFusion:
         rospy.Timer(rospy.Duration(0.1), self.watchdog)
         rospy.Timer(rospy.Duration(1.), self.diagnose)
 
-    def fresh(self, message, timeout):
-        return message is not None and 0 <= (rospy.Time.now()-message.header.stamp).to_sec() <= timeout
+    def fresh(self, message, timeout, future_tolerance=0.):
+        return (message is not None and
+                -future_tolerance <= (rospy.Time.now()-message.header.stamp).to_sec() <= timeout)
+
+    def imu_fresh(self):
+        # MAVROS timestamps can lead ROS time by a few milliseconds. Use the
+        # same bounded allowance in every gate, without retimestamping data
+        # or accepting future-dated DVL velocity measurements.
+        return self.fresh(self.imu, self.imu_timeout, self.imu_future_tolerance)
 
     def on_validity(self, message):
         if not message.data:
@@ -63,7 +71,7 @@ class MavrosDvlFusion:
                 self.vel_invalid_at = rospy.Time.now().to_sec()
 
     def try_start(self):
-        if (not self.started and self.fresh(self.imu, self.imu_timeout) and self.vel_valid
+        if (not self.started and self.imu_fresh() and self.vel_valid
                 and self.fresh(self.velocity, self.vel_timeout)):
             # Wait for EKF subscribers, so startup measurements cannot disappear.
             if self.imu_pub.get_num_connections() and self.velocity_pub.get_num_connections():
@@ -78,7 +86,7 @@ class MavrosDvlFusion:
             if not self.fresh(message, self.vel_timeout) or message.header.stamp.to_sec() < self.vel_invalid_at:
                 return
             self.velocity, self.vel_valid = message, True
-            if self.started and not self.suspended and self.fresh(self.imu, self.imu_timeout):
+            if self.started and not self.suspended and self.imu_fresh():
                 self.velocity_pub.publish(message)
             else:
                 self.try_start()
@@ -111,21 +119,36 @@ class MavrosDvlFusion:
         if rospy.is_shutdown() or rospy.core.is_shutdown_requested():
             return
         with self.lock:
+            header_age = float('nan')
             try:
-                if not self.fresh(message, self.imu_timeout):
-                    raise ValueError('stale/future IMU timestamp')
+                header_age = (rospy.Time.now()-message.header.stamp).to_sec()
+                if not np.isfinite(header_age):
+                    raise ValueError('non-finite IMU timestamp')
+                if header_age < -self.imu_future_tolerance:
+                    raise ValueError('future IMU timestamp')
+                if header_age > self.imu_timeout:
+                    raise ValueError('stale IMU timestamp')
                 message = self.validate_imu(message)
                 stamp = message.header.stamp.to_sec()
                 if self.last_imu_stamp is not None and stamp <= self.last_imu_stamp:
                     return
                 self.last_imu_stamp = stamp
             except (ValueError, TypeError) as exc:
-                if self.started:
+                # Reject the measurement without discarding a still-fresh
+                # healthy IMU. Otherwise one bad timestamp forces SetPose on
+                # the next good packet, repeatedly freezing public odom/TF.
+                # The original freshness deadline still pauses output when
+                # no healthy sample arrives within imu_timeout.
+                last_good_age = ((rospy.Time.now()-self.imu.header.stamp).to_sec()
+                                 if self.imu is not None else float('nan'))
+                if self.started and not self.imu_fresh():
                     self.suspended = True
-                self.imu = None
-                rospy.logwarn_throttle(2., 'DVL EKF rejected IMU: %s', exc)
+                rospy.logwarn_throttle(2., 'DVL EKF rejected IMU: %s; header_age=%+.6fs '
+                                      'last_good_age=%+.6fs limit=%.3fs future_tolerance=%.3fs suspended=%s',
+                                      exc, header_age, last_good_age, self.imu_timeout,
+                                      self.imu_future_tolerance, self.suspended)
                 return
-            if self.started and self.imu is not None and not self.fresh(self.imu, self.imu_timeout):
+            if self.started and self.imu is not None and not self.imu_fresh():
                 self.suspended = True
             self.imu = message
             if self.started and self.suspended:
@@ -173,14 +196,14 @@ class MavrosDvlFusion:
 
     def reset(self, _request):
         with self.lock:
-            if not self.started or not self.fresh(self.imu, self.imu_timeout):
+            if not self.started or not self.imu_fresh():
                 return TriggerResponse(False, 'EKF not initialized or IMU unavailable')
             ok = self.restore_pose(True, rospy.Time.now())
             return TriggerResponse(ok, 'position reset; ENU orientation retained' if ok else 'EKF reset unavailable')
 
     def on_output(self, message):
         with self.lock:
-            if (not self.started or self.suspended or not self.fresh(self.imu, self.imu_timeout)
+            if (not self.started or self.suspended or not self.imu_fresh()
                     or message.header.stamp.to_sec() < self.minimum_output_stamp):
                 return
             self.last_output = copy.deepcopy(message)
@@ -188,7 +211,7 @@ class MavrosDvlFusion:
 
     def watchdog(self, _event):
         with self.lock:
-            if self.started and not self.fresh(self.imu, self.imu_timeout):
+            if self.started and not self.imu_fresh():
                 self.suspended = True
             if not self.started:
                 self.try_start()
@@ -197,7 +220,7 @@ class MavrosDvlFusion:
         with self.lock:
             if not self.started:
                 level, text = 1, 'waiting for fresh IMU and first valid bottom velocity'
-            elif self.suspended or not self.fresh(self.imu, self.imu_timeout):
+            elif self.suspended or not self.imu_fresh():
                 level, text = 2, 'IMU unavailable: public odometry and TF paused'
             elif not self.vel_valid or not self.fresh(self.velocity, self.vel_timeout):
                 level, text = 1, 'DVL unavailable: inertial dead reckoning; position drift accumulates'
@@ -205,7 +228,7 @@ class MavrosDvlFusion:
             else:
                 level, text = 0, 'MAVROS IMU + DVL velocity EKF'
             self.diagnostics.send(level, text, output_hz=20, initialized=self.started,
-                                  imu_fresh=self.fresh(self.imu, self.imu_timeout),
+                                  imu_fresh=self.imu_fresh(),
                                   dvl_fresh=self.vel_valid and self.fresh(self.velocity, self.vel_timeout))
 
 

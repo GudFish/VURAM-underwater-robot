@@ -13,9 +13,17 @@
   <!-- Empty model_dir follows model_root/latest.json. A nonempty directory
        pins one immutable deploy.pt + spec.json and disables hot updates. -->
   <arg name="learning_root" default="$(env HOME)/mujoco_auv_env"/>
-  <arg name="model_root" default="$(arg learning_root)/data/vnd/models"/>
-  <arg name="data_dir" default="$(arg learning_root)/data/vnd/inbox"/>
+  <arg name="transport_mode" default="local"/>
+  <!-- false runs tracking and model updates without recording/uploading H5. -->
+  <arg name="save_data" default="true"/>
+  <!-- <arg name="model_root" default="$(find vuram_control)/scripts/vuram_policy/models/"/> -->
+  <arg name="model_root" default="$(eval arg('learning_root') + '/data/vnd/' + ('lan/models' if arg('transport_mode') == 'lan' else 'models'))"/>
+  <arg name="data_dir" default="$(eval arg('learning_root') + '/data/vnd/' + ('lan/outbox' if arg('transport_mode') == 'lan' else 'inbox'))"/>
   <arg name="model_dir" default=""/>
+  <arg name="lan_server_url" default="http://192.168.1.1:8765"/>
+  <arg name="robot_id" default="auv01"/>
+  <arg name="lan_token_file" default="$(arg learning_root)/data/vnd/lan/token"/>
+  <arg name="lan_poll_interval" default="1.0"/>
   <arg name="spec" default="$(find vuram_control)/config/obs_act.yaml"/>
   <arg name="device" default="cpu"/>
   <!-- Small batch-one actors use one CPU thread to leave CPU time for SITL,
@@ -38,43 +46,62 @@
   <!-- MAVROS may need multiple per-call waits to finish its initial download. -->
   <arg name="param_wait_timeout" default="180.0"/>
   <arg name="param_pull_service" default="/mavros/param/pull"/>
-  <arg name="odom_topic" default="/mavros/local_position/odom"/>
-  <!-- Configure FC telemetry after parameter synchronization, then verify the
-       actual callback rates before starting. Other odometry sources manage
-       their own rates and skip MAVROS rate/IMU setup by default. -->
-  <arg name="configure_mavros_rates" default="$(eval arg('odom_topic').endswith('/local_position/odom'))"/>
-  <arg name="message_interval_service" default="/mavros/set_message_interval"/>
-  <arg name="mavros_telemetry_rate" default="30.0"/>
+  <!-- Select control odometry and its TF/RViz configuration together.
+       start_dvl=false reuses an already-running DVL stack. -->
+  <arg name="odom_source" default="mavros"/>
+  <arg name="start_dvl" default="true"/>
+  <arg name="dvl_ip" default="192.168.1.95"/>
+  <!-- Device fusion estimates body angular rates from successive DR attitudes. -->
+  <arg name="dvl_mode" default="dvl_fused"/>
+  <arg name="dvl_odom_rate" default="20.0"/>
+  <arg name="dvl_timeout" default="1.0"/>
+  <arg name="odom_topic" default="$(eval {'mavros': '/mavros/local_position/odom', 'dvl': '/dvl/odom'}[arg('odom_source')])"/>
+  <!-- FC rates are configured by the shared AUV_ctrl_6dof.launch backend.
+       Controllers independently verify actual odometry and IMU readiness. -->
+  <arg name="check_mavros_imu" default="$(eval arg('odom_topic').endswith('/local_position/odom') or (arg('odom_source') == 'dvl' and arg('dvl_mode') == 'mavros_fused'))"/>
   <arg name="imu_topic" default="/mavros/imu/data"/>
   <arg name="odom_ready_window" default="1.0"/>
   <arg name="odom_timeout" default="0.2"/>
   <!-- MAVROS/DVL twist is body FLU by default; world-frame sources use true. -->
   <arg name="twist_in_world" default="false"/>
-  <arg name="viz_frame_id" default="map"/>
+  <arg name="viz_frame_id" default="$(eval {'mavros': 'map', 'dvl': 'odom'}[arg('odom_source')])"/>
   <arg name="enable_viz" default="true"/>
   <arg name="enable_rviz" default="true"/>
 
-  <include file="$(find vuram_control)/launch/apm.launch">
+  <!-- One common MAVROS, bridge, odometry and telemetry stack. -->
+  <include file="$(find vuram_control)/launch/AUV_ctrl_6dof.launch">
     <arg name="fcu_url" value="$(arg fcu_url)"/>
+    <arg name="setup_fc" value="$(arg setup_fc)"/>
+    <arg name="arm_vehicle" value="$(arg arm_vehicle)"/>
+    <arg name="frame_config" value="1"/>
+    <arg name="acro_yaw_p" value="4.5"/>
+    <arg name="dof_cmd_topic" value="$(arg dof_cmd_topic)"/>
+    <arg name="state_topic" value="$(arg state_topic)"/>
+    <arg name="ready_topic" value="$(arg ready_topic)"/>
+    <arg name="enabled_topic" value="$(arg enabled_topic)"/>
+    <arg name="wait_ready" value="$(arg wait_ready)"/>
+    <arg name="wait_param_list" value="$(arg wait_param_list)"/>
+    <arg name="param_wait_timeout" value="$(arg param_wait_timeout)"/>
+    <arg name="param_pull_service" value="$(arg param_pull_service)"/>
+    <arg name="odom_source" value="$(arg odom_source)"/>
+    <arg name="start_dvl" value="$(arg start_dvl)"/>
+    <arg name="dvl_ip" value="$(arg dvl_ip)"/>
+    <arg name="dvl_mode" value="$(arg dvl_mode)"/>
+    <arg name="dvl_odom_rate" value="$(arg dvl_odom_rate)"/>
+    <arg name="dvl_timeout" value="$(arg dvl_timeout)"/>
+    <arg name="odom_topic" value="$(arg odom_topic)"/>
+    <arg name="imu_topic" value="$(arg imu_topic)"/>
+    <arg name="viz_frame_id" value="$(arg viz_frame_id)"/>
+    <arg name="show_rviz" value="$(arg enable_rviz)"/>
+    <arg name="start_boundary" value="false"/>
   </include>
-
-  <node name="set_6dof_cmd" pkg="vuram_control" type="set_6dof_cmd.py" output="screen">
-    <param name="setup_fc_params" type="bool" value="$(arg setup_fc)"/>
-    <param name="frame_config" type="int" value="1"/>
-    <param name="acro_yaw_p" type="double" value="4.5"/>
-    <param name="arm_vehicle" type="bool" value="$(arg arm_vehicle)"/>
-    <param name="mode" value="MANUAL"/>
-    <param name="cmd_topic" value="$(arg dof_cmd_topic)"/>
-    <param name="cmd_out_topic" value="$(arg dof_cmd_topic)/out"/>
-    <param name="state_topic" value="$(arg state_topic)"/>
-    <param name="ready_topic" value="$(arg ready_topic)"/>
-    <param name="enabled_topic" value="$(arg enabled_topic)"/>
-  </node>
 
   <node name="policy_inference" pkg="vuram_control" type="policy_inference_node.py"
         output="screen" required="true"
         args="--spec &quot;$(arg spec)&quot; --episode_len_s $(arg episode_len_s)">
     <param name="ref_source" value="collect"/>
+    <param name="transport_mode" value="$(arg transport_mode)"/>
+    <param name="save_data" type="bool" value="$(arg save_data)"/>
     <param name="learning_root" value="$(arg learning_root)"/>
     <param name="model_root" value="$(arg model_root)"/>
     <param name="data_dir" value="$(arg data_dir)"/>
@@ -83,10 +110,11 @@
     <param name="inference_threads" value="$(arg inference_threads)"/>
     <param name="ref_speed" value="$(arg ref_speed)"/>
     <param name="figure8_ratio" value="$(arg figure8_ratio)"/>
+    <param name="odom_source" value="$(arg odom_source)"/>
+    <param name="dvl_mode" value="$(arg dvl_mode)"/>
+    <param name="dvl_timeout" value="$(arg dvl_timeout)"/>
     <param name="odom_topic" value="$(arg odom_topic)"/>
-    <param name="configure_mavros_rates" value="$(arg configure_mavros_rates)"/>
-    <param name="message_interval_service" value="$(arg message_interval_service)"/>
-    <param name="mavros_telemetry_rate" value="$(arg mavros_telemetry_rate)"/>
+    <param name="check_mavros_imu" value="$(arg check_mavros_imu)"/>
     <param name="imu_topic" value="$(arg imu_topic)"/>
     <param name="odom_ready_window" value="$(arg odom_ready_window)"/>
     <param name="odom_timeout" value="$(arg odom_timeout)"/>
@@ -103,7 +131,21 @@
     <param name="viz_frame_id" value="$(arg viz_frame_id)"/>
   </node>
 
-  <include if="$(arg enable_rviz)" file="$(find vuram_control)/launch/rviz.launch">
-    <arg name="display_config" value="$(find vuram_control)/config/policy_eval_ardusub.rviz"/>
-  </include>
+  <!-- All network I/O runs outside the control process. LAN outages leave
+       complete episodes in outbox and the last valid local policy usable. -->
+  <node if="$(eval arg('transport_mode') == 'lan' and (arg('save_data') or not arg('model_dir')))"
+        name="policy_lan_sync" pkg="vuram_control" type="lan_sync_node.py"
+        output="screen" respawn="true" respawn_delay="5.0" required="false">
+    <param name="transport_mode" value="$(arg transport_mode)"/>
+    <param name="learning_root" value="$(arg learning_root)"/>
+    <param name="server_url" value="$(arg lan_server_url)"/>
+    <param name="data_dir" value="$(arg data_dir)"/>
+    <param name="model_root" value="$(arg model_root)"/>
+    <param name="robot_id" value="$(arg robot_id)"/>
+    <param name="token_file" value="$(arg lan_token_file)"/>
+    <param name="poll_interval" value="$(arg lan_poll_interval)"/>
+    <param name="upload_data" type="bool" value="$(arg save_data)"/>
+    <param name="download_models" type="bool" value="$(eval not arg('model_dir'))"/>
+  </node>
+
 </launch>

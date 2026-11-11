@@ -21,7 +21,11 @@
   <arg name="odom_topic" default="/dvl/odom"/>
   <arg name="vel_timeout" default="1.0"/>
   <arg name="dr_timeout" default="1.0"/>
+  <arg name="angular_timeout" default="$(arg dr_timeout)"/>
+  <arg name="angular_filter_tau" default="0.2"/>
+  <arg name="angular_max_rate" default="3.0"/>
   <arg name="imu_timeout" default="0.5"/>
+  <arg name="imu_future_tolerance" default="0.02"/>
   <arg name="imu_topic" default="/mavros/imu/data"/>
 
   <node name="dvl_velocity_node" pkg="dvl_odometry" type="dvl_velocity_node.py" output="screen" required="true">
@@ -53,6 +57,9 @@
       <param name="odom_topic" value="$(arg odom_topic)"/>
       <param name="vel_timeout" value="$(arg vel_timeout)"/>
       <param name="dr_timeout" value="$(arg dr_timeout)"/>
+      <param name="angular_timeout" value="$(arg angular_timeout)"/>
+      <param name="angular_filter_tau" value="$(arg angular_filter_tau)"/>
+      <param name="angular_max_rate" value="$(arg angular_max_rate)"/>
     </node>
   </group>
 
@@ -68,6 +75,7 @@
     <node name="mavros_dvl_fusion_node" pkg="dvl_odometry" type="mavros_dvl_fusion_node.py" output="screen" required="true">
       <param name="imu_topic" value="$(arg imu_topic)"/>
       <param name="imu_timeout" value="$(arg imu_timeout)"/>
+      <param name="imu_future_tolerance" value="$(arg imu_future_tolerance)"/>
       <param name="vel_timeout" value="$(arg vel_timeout)"/>
       <param name="publish_tf" value="$(arg publish_tf)"/>
       <param name="publish_z" value="$(arg publish_z)"/>

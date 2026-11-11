@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from vuram_policy.telemetry import StreamMonitor
+from control.telemetry import StreamMonitor
 
 
 def feed(monitor, rate=30., duration=2., start=10., stamp_start=1000.):

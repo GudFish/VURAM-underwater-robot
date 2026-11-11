@@ -64,10 +64,13 @@ catkin_install_python(PROGRAMS
   scripts/control/depth_hold_velocity_mux.py
   scripts/control/set_6dof_cmd.py
   scripts/control/set_thruster_cmd.py
+  scripts/control/pd_controller_node.py
+  scripts/control/mavros_telemetry_node.py
   scripts/utils/auto_arm_guided.py
   scripts/visualization/boundary_loader.py
   scripts/visualization/tf_baselink_map_node.py
   scripts/vuram_policy/policy_inference_node.py
+  scripts/data_collection/lan_sync_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

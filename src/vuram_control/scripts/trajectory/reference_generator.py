@@ -12,7 +12,7 @@ at the surface).
 """
 import numpy as np
 
-from .utils import yaw_quat
+from utils.math3d import yaw_quat
 
 MAX_REF_SPEED = 0.5   # m/s
 

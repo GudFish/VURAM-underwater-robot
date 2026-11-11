@@ -16,11 +16,17 @@ import pytest
 PACKAGE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE / 'scripts'))
 
-from vuram_policy import collection as collect
-from vuram_policy import collection_node as node
+from data_collection.contract import TrainingContract
+from control import mavros_startup
+from data_collection.episodes import EpisodeWriter, LapRecorder, next_iteration, write_episode
+from trajectory.figure8 import FixedFigure8
+from vuram_policy.model_reload import PolicyReloader
+from control import tracking_node as node
+from data_collection import episodes
+from vuram_policy import policy_inference as policy_node
 from vuram_policy.policy_inference import PolicyInference
-from vuram_policy.spec import load_spec
-from vuram_policy.utils import quat_to_R, yaw_quat
+from control.observation import load_spec
+from utils.math3d import quat_to_R, yaw_quat
 
 LEARNING_ROOT = Path(os.environ.get('AUV_LEARNING_ROOT', '~/mujoco_auv_env')).expanduser()
 
@@ -29,7 +35,7 @@ LEARNING_ROOT = Path(os.environ.get('AUV_LEARNING_ROOT', '~/mujoco_auv_env')).ex
 def contract():
     if not (LEARNING_ROOT / 'auv_learning').is_dir():
         pytest.skip('set AUV_LEARNING_ROOT to the training checkout')
-    return collect.TrainingContract(LEARNING_ROOT)
+    return TrainingContract(LEARNING_ROOT)
 
 
 @pytest.fixture
@@ -55,9 +61,9 @@ class ConstantPolicy:
 
 
 def record_lap(contract, spec, policy=None, duration=30., iteration=0):
-    trajectory = collect.FixedFigure8(state_at(), duration=duration)
+    trajectory = FixedFigure8(state_at(), duration=duration)
     policy = policy or ConstantPolicy()
-    lap = collect.LapRecorder(contract, spec, trajectory, policy, iteration)
+    lap = LapRecorder(contract, spec, trajectory, policy, iteration)
     issued = []
     for index in range(trajectory.intervals + 1):
         pos, quat, _, _ = trajectory.get_ref(trajectory.params, index * .05)
@@ -71,7 +77,7 @@ def record_lap(contract, spec, policy=None, duration=30., iteration=0):
 @pytest.mark.parametrize('yaw', [-2., 0., 1.3])
 def test_figure8_anchor_plane_closure_speed_and_heading(yaw):
     state = state_at(pos=(-4., 7., -.3), yaw=yaw)
-    curve = collect.FixedFigure8(state)
+    curve = FixedFigure8(state)
     start = curve.get_ref(curve.params, 0.)
     np.testing.assert_allclose(start[0], state[10:13])
     np.testing.assert_allclose(quat_to_R(start[1]), quat_to_R(state[6:10]), atol=1e-14)
@@ -92,12 +98,12 @@ def test_figure8_anchor_plane_closure_speed_and_heading(yaw):
                                   dict(speed=float('nan')), dict(duration=.001)])
 def test_invalid_trajectory_rejected(kwargs):
     with pytest.raises(ValueError):
-        collect.FixedFigure8(state_at(), **kwargs)
+        FixedFigure8(state_at(), **kwargs)
 
 
 def test_figure8_parameters_reconstruct_in_training_generator(contract):
     from auv_learning.task.references import ReferenceGenerator
-    curve = collect.FixedFigure8(state_at(), duration=30.02, speed=.4, ratio=.7)
+    curve = FixedFigure8(state_at(), duration=30.02, speed=.4, ratio=.7)
     assert curve.duration == 30.
     generator = ReferenceGenerator()
     for t in np.linspace(0, curve.duration, 80):
@@ -121,7 +127,7 @@ def test_complete_lap_has_600_transitions_and_persistent_motor_state(contract, s
     motor = contract.allocator.motor_force.copy()
     np.testing.assert_array_equal(bundle.arrays['motor_force_pre'][-1], motor)
     next_policy = ConstantPolicy(version=1, action=-.2)
-    next_lap = collect.LapRecorder(contract, spec, lap.trajectory, next_policy, 1)
+    next_lap = LapRecorder(contract, spec, lap.trajectory, next_policy, 1)
     next_lap.record(bundle.arrays['state'][-1], 130., 130., lambda action: None)
     np.testing.assert_array_equal(next_lap.rows[0]['motor_force_pre'], motor)
     assert next_policy.valids == [0]
@@ -130,7 +136,48 @@ def test_complete_lap_has_600_transitions_and_persistent_motor_state(contract, s
         next_lap.finish()
 
 
-def test_h5_roundtrip_ingestion_and_one_training_batch(contract, spec, tmp_path, monkeypatch):
+def test_disabled_saving_keeps_control_and_bounded_history_without_episode_arrays(contract, spec, monkeypatch):
+    monkeypatch.setattr(contract, 'reward', Mock(side_effect=AssertionError('reward in test mode')))
+    policy = ConstantPolicy(action=.1)
+    trajectory = FixedFigure8(state_at())
+    lap = LapRecorder(contract, spec, trajectory, policy, 0, save_data=False)
+    issued = []
+    for index in range(trajectory.intervals + 1):
+        assert lap.record(state_at(), index * .05, index * .05,
+                          lambda action: issued.append(action.copy())) == (index == 600)
+        assert lap.rows == lap.extra_rows == []
+        assert len(lap.history) <= 20
+    assert len(issued) == 600
+    assert lap.step_index == 601
+    contract.reward.assert_not_called()
+    with pytest.raises(ValueError, match='disabled'):
+        lap.finish()
+    with pytest.raises(ValueError, match='already complete'):
+        lap.record(state_at(), 31., 31., lambda action: None)
+    motor = contract.allocator.motor_force.copy()
+    next_lap = LapRecorder(contract, spec, trajectory, policy, 1, save_data=False)
+    np.testing.assert_array_equal(next_lap.previous, np.zeros(5))
+    assert not next_lap.history
+    np.testing.assert_array_equal(contract.allocator.motor_force, motor)
+    next_lap.record(state_at(), 30., 30., lambda action: None)
+    assert policy.valids[-1] == 0
+
+
+@pytest.mark.parametrize('action', [np.full(5, np.nan), np.zeros(6)])
+def test_invalid_controller_output_never_reaches_publisher(contract, spec, action):
+    policy = ConstantPolicy()
+    policy.step = Mock(return_value=action)
+    lap = LapRecorder(contract, spec, FixedFigure8(state_at()), policy, 0,
+                              save_data=False)
+    send = Mock()
+    with pytest.raises(ValueError, match='five finite'):
+        lap.record(state_at(), 0., 0., send)
+    send.assert_not_called()
+    np.testing.assert_array_equal(contract.allocator.motor_force, np.zeros(6))
+
+
+@pytest.mark.parametrize('controller_kind', ['policy', 'pd'])
+def test_h5_roundtrip_ingestion_and_one_training_batch(contract, spec, tmp_path, monkeypatch, controller_kind):
     import torch
     from auv_learning.deployment.episode import EpisodeBundle
     from auv_learning.dynamics.fossen import FossenPrior
@@ -143,11 +190,17 @@ def test_h5_roundtrip_ingestion_and_one_training_batch(contract, spec, tmp_path,
     from auv_learning.learning.vnd.optimization import train_vnd, train_policy_stage
 
     torch.set_num_threads(2)
-    lap, _ = record_lap(contract, spec)
+    from control.pd_controller import PDController
+    controller = PDController(contract.allocator) if controller_kind == 'pd' else None
+    lap, _ = record_lap(contract, spec, policy=controller)
     bundle, extras = lap.finish()
+    assert bundle.attrs['controller_type'] == controller_kind
+    if controller_kind == 'pd':
+        assert bundle.attrs['controller_parameters'] == controller.parameters
+        assert bundle.attrs['policy_version'] == -1
     inbox = tmp_path / 'inbox'
     inbox.mkdir()
-    path = collect.write_episode(bundle, extras, str(inbox))
+    path = write_episode(bundle, extras, str(inbox))
     decoded = EpisodeBundle.from_hdf5(path)
     assert decoded.n_steps == 601
     with h5py.File(path) as stream:
@@ -173,7 +226,7 @@ def test_h5_roundtrip_ingestion_and_one_training_batch(contract, spec, tmp_path,
                                 dict(steps=1, batch=2, horizon=2), spec['obs_layout'],
                                 contract.reward_weights, 'cpu', rng)
     assert result['updates'] == 1 and np.isfinite(result['policy_loss'])
-    assert collect.next_iteration(str(inbox)) == 1
+    assert next_iteration(str(inbox)) == 1
 
 
 def test_atomic_spooling_is_invisible_until_complete_and_never_overwrites(contract, spec, tmp_path):
@@ -188,7 +241,7 @@ def test_atomic_spooling_is_invisible_until_complete_and_never_overwrites(contra
         assert release.wait(5.)
 
     with patch.object(bundle, 'to_hdf5', delayed):
-        writer = collect.EpisodeWriter(str(tmp_path))
+        writer = EpisodeWriter(str(tmp_path))
         try:
             writer.submit(bundle, extras)
             assert writing.wait(5.)
@@ -200,7 +253,7 @@ def test_atomic_spooling_is_invisible_until_complete_and_never_overwrites(contra
     path = next(tmp_path.glob('*.h5'))
     previous = path.read_bytes()
     with pytest.raises(FileExistsError):
-        collect.write_episode(bundle, extras, str(tmp_path))
+        write_episode(bundle, extras, str(tmp_path))
     assert path.read_bytes() == previous
     assert not list(tmp_path.glob('*.tmp-*'))
 
@@ -215,8 +268,8 @@ def test_writer_queue_is_bounded_and_write_errors_propagate(contract, spec, tmp_
         assert release.wait(5.)
         return 'saved'
 
-    with patch.object(collect, 'write_episode', slow_write):
-        writer = collect.EpisodeWriter(str(tmp_path))
+    with patch.object(episodes, 'write_episode', slow_write):
+        writer = EpisodeWriter(str(tmp_path))
         try:
             writer.submit(bundle, extras)
             assert blocked.wait(5.)
@@ -227,8 +280,8 @@ def test_writer_queue_is_bounded_and_write_errors_propagate(contract, spec, tmp_
         finally:
             release.set()
             writer.close()
-    with patch.object(collect, 'write_episode', side_effect=OSError('disk full')):
-        writer = collect.EpisodeWriter(str(tmp_path))
+    with patch.object(episodes, 'write_episode', side_effect=OSError('disk full')):
+        writer = EpisodeWriter(str(tmp_path))
         writer.submit(bundle, extras)
         with pytest.raises(RuntimeError, match='disk full'):
             writer.close()
@@ -246,7 +299,7 @@ def fake_snapshot(root, version):
 def test_reloader_prepares_without_changing_active_and_handles_bad_publication(tmp_path):
     fake_snapshot(tmp_path, 0)
     loader = lambda path: ConstantPolicy(int(Path(path).name[8:]))
-    reloader = collect.PolicyReloader(str(tmp_path), loader)
+    reloader = PolicyReloader(str(tmp_path), loader)
     reloader.poll_once()
     active = reloader.take_ready()
     assert active.version == 0
@@ -265,7 +318,7 @@ def test_reloader_prepares_without_changing_active_and_handles_bad_publication(t
         reloader.poll_once()
     assert reloader.take_ready() is None and active.version == 1
     # A pinned directory ignores the pointer, even if a newer version exists.
-    pinned = collect.PolicyReloader(str(tmp_path), loader, str(second))
+    pinned = PolicyReloader(str(tmp_path), loader, str(second))
     pinned.poll_once()
     assert pinned.take_ready().version == 1
     pinned.load_policy = Mock(return_value=ConstantPolicy(10))
@@ -284,7 +337,7 @@ def test_slow_background_loading_does_not_block_active_policy(tmp_path):
         assert release.wait(5.)
         return ConstantPolicy(3)
 
-    reloader = collect.PolicyReloader(str(tmp_path), slow_load)
+    reloader = PolicyReloader(str(tmp_path), slow_load)
     reloader.start()
     try:
         assert started.wait(5.)
@@ -439,100 +492,6 @@ def test_watchdog_cannot_hide_a_slow_publish_and_reports_actual_gap(monkeypatch,
         watchdog.close()
 
 
-@pytest.fixture
-def parameter_wait_mocks(monkeypatch):
-    clock = SimpleNamespace(now=0.)
-    monkeypatch.setattr(node, 'time', SimpleNamespace(
-        monotonic=lambda: clock.now,
-        sleep=lambda seconds: setattr(clock, 'now', clock.now + seconds)))
-    monkeypatch.setattr(node.rospy, 'is_shutdown', lambda: False)
-    monkeypatch.setattr(node.rospy, 'logwarn', Mock())
-    monkeypatch.setattr(node.rospy, 'loginfo', Mock())
-    monkeypatch.setattr(node.rospy, 'loginfo_throttle', Mock())
-    available = Mock()
-    monkeypatch.setattr(node.rospy, 'wait_for_service', available)
-    return clock, available
-
-
-def test_parameter_pull_timeout_responses_retry_same_download(parameter_wait_mocks, monkeypatch):
-    clock, available = parameter_wait_mocks
-    request = Mock(side_effect=[SimpleNamespace(success=False, param_received=400),
-                                SimpleNamespace(success=False, param_received=900),
-                                SimpleNamespace(success=True, param_received=1600)])
-    monkeypatch.setattr(node.rospy, 'ServiceProxy', Mock(return_value=request))
-    neutral = Mock()
-    assert node.wait_for_parameter_list('/mavros/param/pull', neutral)
-    assert request.call_count == available.call_count == 3
-    assert all(call.kwargs == {'force_pull': False} for call in request.call_args_list)
-    assert neutral.call_count >= 20 and clock.now >= 2.
-
-
-def test_parameter_service_becoming_available_is_retried(parameter_wait_mocks, monkeypatch):
-    _, available = parameter_wait_mocks
-    available.side_effect = [node.rospy.ROSException('not available yet'), None]
-    request = Mock(return_value=SimpleNamespace(success=True, param_received=1600))
-    monkeypatch.setattr(node.rospy, 'ServiceProxy', Mock(return_value=request))
-    assert node.wait_for_parameter_list('/mavros/param/pull', Mock())
-    assert available.call_count == 2 and request.call_count == 1
-
-
-def test_parameter_wait_overall_timeout_reports_progress(parameter_wait_mocks, monkeypatch):
-    request = Mock(return_value=SimpleNamespace(success=False, param_received=123))
-    monkeypatch.setattr(node.rospy, 'ServiceProxy', Mock(return_value=request))
-    with pytest.raises(RuntimeError, match='within 0.5s .*123 parameters'):
-        node.wait_for_parameter_list('/mavros/param/pull', Mock(), timeout=.5)
-    assert request.call_count == 1
-
-
-@pytest.mark.parametrize('shutdown', [False, True])
-def test_parameter_wait_remains_neutral_and_cancellable_during_blocked_rpc(monkeypatch, shutdown):
-    release, finished, stop = threading.Event(), threading.Event(), threading.Event()
-    monkeypatch.setattr(node.rospy, 'wait_for_service', Mock())
-    monkeypatch.setattr(node.rospy, 'is_shutdown', stop.is_set)
-    monkeypatch.setattr(node.rospy, 'loginfo_throttle', Mock())
-
-    def request(**kwargs):
-        try:
-            if shutdown:
-                stop.set()
-            assert release.wait(2.)
-            return SimpleNamespace(success=True, param_received=1600)
-        finally:
-            finished.set()
-
-    rpc = Mock(side_effect=request)
-    monkeypatch.setattr(node.rospy, 'ServiceProxy', Mock(return_value=rpc))
-    neutral = Mock()
-    started = time.monotonic()
-    try:
-        if shutdown:
-            assert node.wait_for_parameter_list('/mavros/param/pull', neutral) is False
-        else:
-            with pytest.raises(RuntimeError, match='within 0.1s'):
-                node.wait_for_parameter_list('/mavros/param/pull', neutral, timeout=.1)
-        assert time.monotonic() - started < 1.
-        assert rpc.call_count == 1
-        assert neutral.call_count >= 1
-    finally:
-        release.set()
-        assert finished.wait(1.)
-
-
-@pytest.mark.parametrize('success', [True, False])
-def test_telemetry_setup_requests_position_and_quaternion_rate_and_reports_rejection(monkeypatch, success):
-    request = Mock(return_value=SimpleNamespace(success=success))
-    monkeypatch.setattr(node.rospy, 'wait_for_service', Mock())
-    monkeypatch.setattr(node.rospy, 'ServiceProxy', Mock(return_value=request))
-    monkeypatch.setattr(node.rospy, 'is_shutdown', lambda: False)
-    monkeypatch.setattr(node.rospy, 'loginfo', Mock())
-    monkeypatch.setattr(node.rospy, 'logwarn', Mock())
-    neutral = Mock()
-    assert node.configure_mavros_telemetry('/mavros/set_message_interval', 30., neutral) is success
-    assert [call.kwargs for call in request.call_args_list] == [
-        dict(message_id=31, message_rate=30.), dict(message_id=32, message_rate=30.)]
-    assert neutral.called
-    assert node.rospy.logwarn.called is not success
-
 
 def test_bridge_enable_callback_publishes_status_and_neutral():
     module_spec = importlib.util.spec_from_file_location(
@@ -551,7 +510,7 @@ def test_collect_dispatch_preserves_external_and_internal_entrypoints(spec):
     from vuram_policy import policy_inference
     with patch.object(policy_inference.rospy, 'get_param',
                       side_effect=lambda key, default=None: 'collect' if key == '~ref_source' else default), \
-         patch.object(node, 'run_collection_node') as run:
+         patch.object(policy_node, 'run_collection_node') as run:
         policy_inference.run_policy_node('', str(PACKAGE / 'config/obs_act.yaml'), episode_len_s=30.)
         assert run.call_args[0][0] == '' and run.call_args[0][2] == 30.
     with patch.object(policy_inference.rospy, 'get_param', side_effect=lambda key, default=None: default), \
@@ -561,15 +520,18 @@ def test_collect_dispatch_preserves_external_and_internal_entrypoints(spec):
         assert policy.call_args[0][0].endswith('models/policy_v000012')
 
 
-@pytest.mark.parametrize('disconnect,mavros_rates,odom_hz,imu_hz,rollback', [
+@pytest.mark.parametrize('save_data', [True, False])
+@pytest.mark.parametrize('controller_kind', ['policy', 'pd'])
+@pytest.mark.parametrize('disconnect,check_imu,odom_hz,imu_hz,rollback', [
     (False, False, 20., 20., False), (False, True, 20., 20., False),
     (True, True, 20., 20., False), (False, True, 4., 30., False),
     (False, True, 30., 4., False), (False, True, 20., 20., True),
 ])
 def test_runtime_waits_for_arming_switches_only_between_laps_and_drains_h5(contract, spec,
                                                                          tmp_path, monkeypatch,
-                                                                         disconnect, mavros_rates,
-                                                                         odom_hz, imu_hz, rollback):
+                                                                         disconnect, check_imu,
+                                                                         odom_hz, imu_hz, rollback,
+                                                                         save_data, controller_kind):
     from vuram_policy import policy_inference
     commands, zeros, errors = [], [], []
     state = SimpleNamespace(connected=True, armed=False, mode='MANUAL')
@@ -590,6 +552,7 @@ def test_runtime_waits_for_arming_switches_only_between_laps_and_drains_h5(contr
 
     clock = Clock()
     monkeypatch.setattr(node, 'time', clock)
+    monkeypatch.setattr(mavros_startup, 'time', clock)
 
     class Pose:
         sub = Mock()
@@ -684,7 +647,7 @@ def test_runtime_waits_for_arming_switches_only_between_laps_and_drains_h5(contr
 
     params = {'~learning_root': str(LEARNING_ROOT), '~data_dir': str(tmp_path / 'inbox'),
               '~model_dir': '', '~wait_param_list': True, '~viz': False,
-              '~configure_mavros_rates': mavros_rates}
+              '~check_mavros_imu': check_imu, '~save_data': save_data}
     monkeypatch.setattr(node.rospy, 'get_param', lambda key, default=None: params.get(key, default))
     monkeypatch.setattr(node.rospy, 'is_shutdown', lambda: len(commands) >= 9 or clock.now > 5.)
     monkeypatch.setattr(node.rospy, 'on_shutdown', Mock())
@@ -697,16 +660,23 @@ def test_runtime_waits_for_arming_switches_only_between_laps_and_drains_h5(contr
     monkeypatch.setattr(node.rospy, 'wait_for_service', Mock())
     pull = Mock(side_effect=[SimpleNamespace(success=False, param_received=400),
                             SimpleNamespace(success=True, param_received=1600)])
-    intervals = Mock(return_value=SimpleNamespace(success=True))
-    monkeypatch.setattr(node.rospy, 'ServiceProxy',
-                        lambda service, kind: intervals if kind is node.MessageInterval else pull)
+    services = Mock(return_value=pull)
+    monkeypatch.setattr(node.rospy, 'ServiceProxy', services)
     monkeypatch.setattr(node, 'ThrusterInterface', lambda topic: Thrusters())
-    monkeypatch.setattr(policy_inference, 'PoseState', Pose)
-    monkeypatch.setattr(node, 'PolicyReloader', Loader)
+    monkeypatch.setattr(node, 'PoseState', Pose)
+    monkeypatch.setattr(policy_node, 'PolicyReloader', Loader)
     monkeypatch.setattr(node, 'CollectionWatchdog', Watchdog)
-    node.run_collection_node('', spec, .2)
+    if not save_data:
+        monkeypatch.setattr(node, 'EpisodeWriter', Mock(side_effect=AssertionError('writer in test mode')))
+        monkeypatch.setattr(node, 'next_iteration', Mock(side_effect=AssertionError('scan in test mode')))
+    if controller_kind == 'pd':
+        from control.pd_controller_node import run_pd_node
+        run_pd_node(spec, .2)
+        assert not configured  # PD never configures Torch or loads a snapshot.
+    else:
+        policy_node.run_collection_node('', spec, .2)
     assert pull.call_count == 2
-    assert intervals.call_count == (2 if mavros_rates else 0)
+    assert all(call.args[1] is mavros_startup.ParamPull for call in services.call_args_list)
     if odom_hz < 19. or imu_hz < 19.:
         assert not commands and not errors
         assert not list((tmp_path / 'inbox').glob('*.h5'))
@@ -728,14 +698,24 @@ def test_runtime_waits_for_arming_switches_only_between_laps_and_drains_h5(contr
     assert len(commands) == 9
     assert commands[0][0] >= 2.  # param retry + a full second of actual odometry readiness
     np.testing.assert_allclose(np.diff([t for t, _ in commands]), .05)
-    for _, action in commands[:4]:
-        np.testing.assert_array_equal(action, np.full(5, .1))
-    for _, action in commands[4:]:
-        np.testing.assert_array_equal(action, np.full(5, -.1))
+    if controller_kind == 'policy':
+        for _, action in commands[:4]:
+            np.testing.assert_array_equal(action, np.full(5, .1))
+        for _, action in commands[4:]:
+            np.testing.assert_array_equal(action, np.full(5, -.1))
+        assert policies[0].valids[0] == policies[1].valids[0] == 0
+    else:
+        assert all(np.isfinite(action).all() and np.max(np.abs(action)) <= 1. for _, action in commands)
+    if not save_data:
+        assert not (tmp_path / 'inbox').exists()
+        node.EpisodeWriter.assert_not_called()
+        node.next_iteration.assert_not_called()
+        return
     files = sorted((tmp_path / 'inbox').glob('*.h5'))
     assert len(files) == 2
     bundles = [contract.bundle_type.from_hdf5(str(path)) for path in files]
-    assert [b.attrs['policy_version'] for b in bundles] == [7, 8]
+    assert [b.attrs['policy_version'] for b in bundles] == ([7, 8] if controller_kind == 'policy' else [-1, -1])
+    assert [b.attrs['controller_type'] for b in bundles] == [controller_kind, controller_kind]
     assert [b.n_steps for b in bundles] == [5, 5]
     np.testing.assert_array_equal(bundles[0].arrays['state'][0, 10:13],
                                   bundles[0].arrays['ref'][0, :3])
@@ -755,7 +735,8 @@ def test_launch_expansion_custom_topics_empty_model_dir_and_external_compatibili
     config = roslaunch.config.ROSLaunchConfig()
     roslaunch.xmlloader.XmlLoader().load(str(PACKAGE / 'launch/policy_deploy.launch'), config,
                                        argv=['enable_rviz:=false', 'dof_cmd_topic:=/custom_control',
-                                             'ref_speed:=0.5', 'inference_threads:=2'],
+                                             'ref_speed:=0.5', 'figure8_ratio:=0.6',
+                                             'episode_len_s:=30.0', 'inference_threads:=2'],
                                        verbose=False)
     values = {name: param.value for name, param in config.params.items()}
     assert values['/policy_inference/ref_source'] == 'collect'
@@ -766,8 +747,8 @@ def test_launch_expansion_custom_topics_empty_model_dir_and_external_compatibili
     assert values['/policy_inference/figure8_ratio'] == .6
     assert values['/policy_inference/inference_threads'] == 2
     assert values['/policy_inference/param_wait_timeout'] == 180.
-    assert values['/policy_inference/configure_mavros_rates'] is True
-    assert values['/policy_inference/mavros_telemetry_rate'] == 30.
+    assert values['/policy_inference/check_mavros_imu'] is True
+    assert values['/mavros_telemetry/mavros_telemetry_rate'] == 20.
     assert values['/policy_inference/odom_ready_window'] == 1.
     infer = next(n for n in config.nodes if n.name == 'policy_inference')
     assert infer.required and '--episode_len_s 30.0' in infer.args
@@ -779,4 +760,30 @@ def test_launch_expansion_custom_topics_empty_model_dir_and_external_compatibili
     custom_odom = roslaunch.config.ROSLaunchConfig()
     roslaunch.xmlloader.XmlLoader().load(str(PACKAGE / 'launch/policy_deploy.launch'), custom_odom,
                                        argv=['enable_rviz:=false', 'odom_topic:=/dvl/odom'], verbose=False)
-    assert custom_odom.params['/policy_inference/configure_mavros_rates'].value is False
+    assert custom_odom.params['/policy_inference/check_mavros_imu'].value is False
+
+
+def test_bad_transport_mode_fails_before_publisher_or_training_import(monkeypatch, spec):
+    monkeypatch.setattr(node.rospy, 'get_param',
+                        lambda name, default=None: 'bad' if name == '~transport_mode' else default)
+    with patch.object(node, 'TrainingContract') as contract, \
+            patch.object(node, 'ThrusterInterface') as thrusters:
+        with pytest.raises(ValueError, match='transport_mode'):
+            policy_node.run_collection_node('', spec, 30.)
+        contract.assert_not_called()
+        thrusters.assert_not_called()
+
+
+def test_local_numbering_honors_lan_receipts_after_archive_deleted(contract, spec, tmp_path):
+    from auv_learning.deployment.lan_store import EpisodeStore, sha256_file
+    lap, _ = record_lap(contract, spec, duration=.2)
+    (tmp_path / 'source').mkdir()
+    source = write_episode(*lap.finish(), str(tmp_path / 'source'))
+    store = EpisodeStore(tmp_path / 'host')
+    try:
+        ack = store.receive(source, 'auv01', Path(source).stem, sha256_file(source))
+    finally:
+        store.close()
+    for path in (tmp_path / 'host/inbox').glob('*.h5'):
+        path.unlink()
+    assert next_iteration(str(tmp_path / 'host/inbox')) == ack['iteration'] + 1
